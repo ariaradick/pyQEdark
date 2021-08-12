@@ -1,3 +1,17 @@
+# %%
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+params = {'text.usetex' : True, \
+          'font.size' : 14, \
+          'font.family' : 'cmr10'}#, \
+          #'figure.autolayout': True}
+plt.rcParams.update(params)
+plt.rcParams['axes.unicode_minus']=False
+plt.rcParams['axes.labelsize']=16
+np.seterr(divide='ignore')
+
 # %% markdown
 
 # #About Crystal_DMe:

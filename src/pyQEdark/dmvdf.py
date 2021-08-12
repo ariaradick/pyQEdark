@@ -208,7 +208,7 @@ class DM_VDF:
     def make_etaInterp(self):
         N_vmin = 1000
         vmin = np.linspace(0, (self.vE+self.vesc+1)/ckms, N_vmin)
-        eta = self.eta_fn(Vmin*self.in_vcorr)*self.out_vcorr
+        eta = self.eta_fn(vmin*self.in_vcorr)*self.out_vcorr
 
         return interp1d(vmin*self.in_vcorr, eta/self.out_vcorr,
                         bounds_error=False, fill_value=0.)
