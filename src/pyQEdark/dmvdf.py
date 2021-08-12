@@ -85,16 +85,11 @@ class DM_VDF:
                     self.eta = self.etaInterp
 
             elif callable(kwargs['vdf']):
-                self.vname = 'Custom'
-                self.vdf = 'custom'
-                self.vsavename = 'custom'
                 self.f_VDF = lambda x: kwargs['vdf'](x) / self.vcorr**3
                 self.v2f = lambda x: x**2 * self.f_VDF(x) / self.vcorr
 
-                self.v0 = None
                 self.vE = 232/ckms * self.in_vcorr
                 self.vesc = 544/ckms * self.in_vcorr
-                self.p = None
 
                 self.set_custom_params(**kwargs)
 
@@ -122,14 +117,9 @@ class DM_VDF:
 
             if callable(kwargs['eta']):
                 self.eta_fn = lambda x: kwargs['eta'](x) / self.vcorr
-                self.vname = 'Custom'
-                self.vdf = 'custom'
-                self.vsavename = 'custom'
 
-                self.v0 = None
                 self.vE = 232/ckms * self.in_vcorr
                 self.vesc = 544/ckms * self.in_vcorr
-                self.p = None
 
                 self.set_custom_params(**kwargs)
 
@@ -211,11 +201,12 @@ class DM_VDF:
                 self.eta = self.etaInterp
 
     def set_custom_params(self, **kwargs):
-        custom_keys = {'vname', 'vsavename', 'vE', 'vesc'}
+        custom_keys = {'vE', 'vesc'}
         self.__dict__.update((k,v) for k,v in kwargs.items() \
                              if k in custom_keys)
 
     def make_etaInterp(self):
+        N_vmin = 1000
         vmin = np.linspace(0, (self.vE+self.vesc+1)/ckms, N_vmin)
         eta = self.eta_fn(Vmin*self.in_vcorr)*self.out_vcorr
 
