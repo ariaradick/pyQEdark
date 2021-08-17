@@ -8,11 +8,13 @@ date created: 11/25/19
 import numpy as np
 import io
 import pkgutil
+from os import path as osp
+import sqlite3
 
 from pyQEdark.constants import *
-from pyQEdark.dmvdf import DM_VDF
+from pyQEdark.dmvdf import DM_Halo
 
-class Crystal_DMe(DM_VDF):
+class Crystal_DMe(DM_Halo):
 
     """
     material is a string that represents the given material, presently only
@@ -36,7 +38,27 @@ class Crystal_DMe(DM_VDF):
     vparams : list of parameters corresponding to the chosen vdf [nat. units]
     """
 
-    def __init__(self, material, **kwargs):
+    def __init__(self, material, save_loc=None, **kwargs):
+
+        self.save_loc = save_loc
+
+        if self.save_loc is not None:
+            def adapt_array(arr):
+                out = io.BytesIO()
+                np.save(out, arr)
+                out.seek(0)
+                return sqlite3.Binary(out.read())
+
+            def convert_array(text):
+                out = io.BytesIO(text)
+                out.seek(0)
+                return np.load(out)
+
+            sqlite3.register_adapter(np.ndarray, adapt_array)
+            sqlite3.register_converter("array", convert_array)
+
+            if not osp.exists(self.save_loc):
+                self._init_db()
 
         self._setup_mat(material)
 
@@ -55,6 +77,9 @@ class Crystal_DMe(DM_VDF):
 
         self.set_params(**defaults)
         self.set_params(**kwargs)
+
+        if self.save_loc is not None:
+            self.vdf_id = self._get_vdf_id()
 
     def _setup_mat(self, material):
 

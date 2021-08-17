@@ -34,12 +34,14 @@ def f_SHM(*args, vp=2):
             np.exp(-vesc**2/v0**2) )
 
     def shm_(v):
-        return v**vp*1/KK_*np.exp(-v**2/v0**2)*np.heaviside(vesc-v, .5)
+        return v**vp*1/KK_*np.exp(-v**2/v0**2)
+
+    output = lambda v: np.piecewise( v, [v < vesc, v >= vesc], [shm_, 0])
 
     if return_func:
-        return shm_
+        return output
     else:
-        return shm_(V)
+        return output(V)
 
 def f_DPL(_params, vp=2):
     """
@@ -104,7 +106,7 @@ def f_Tsa(*args, vp=2):
     def tsa_(v):
         return v**vp * 1/KK_ * ( 1 - (1-q)*v**2/v0**2 )**(1/(1-q))
 
-    tsa_fn = lambda v: np.piecewise(v, [v<=vesc, v>vesc], [tsa_, 0])
+    tsa_fn = lambda v: np.piecewise(v, [v<vesc, v>=vesc], [tsa_, 0])
 
     if return_func:
         return tsa_fn

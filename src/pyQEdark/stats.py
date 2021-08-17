@@ -1,7 +1,10 @@
 import numpy as np
 from scipy.stats import chisquare, norm, poisson, chi2
 from scipy.special import gammaincc, gamma
-from scipy.optimize import brentq
+from scipy.optimize import brentq, minimize
+
+from pyQEdark.constants import ckms
+from pyQEdark.crystaldme import Crystal_DMe
 
 def p_from_Z(signif):
     return 1-norm.cdf(signif)
@@ -23,7 +26,7 @@ def chisq_test(data, theory, ddof=0):
     return chisquare(data_, theory_, ddof=ddof)
 
 def _t_mu(data, theory):
-    t = 0.0
+    t = np.zeros_like(data)
     nu = len(data)
 
     data_ = np.zeros_like(data)
@@ -36,10 +39,10 @@ def _t_mu(data, theory):
         if theory_[i] == 0.0:
             nu -= 1
         elif data_[i] == 0.0:
-            t += theory_[i]
+            t[i] = theory_[i]
         else:
-            t += theory_[i]-data_[i]+data_[i]*np.log(data_[i]/theory_[i])
-    t *= 2
+            t[i] = theory_[i]-data_[i]+data_[i]*np.log(data_[i]/theory_[i])
+    t = 2*np.sum(t)
 
     return (t,nu)
 
@@ -86,3 +89,27 @@ def find_exposure(data, theory, signif, ddof=0, method='chi2', bqlims=1e6):
                p_from_Z(signif)
 
     return brentq(zero_func, 1/bqlims, bqlims)
+
+def find_MLE(material, exposure, vE, data, vdf='shm', v0=220/ckms,
+             vesc=544/ckms, p=1.5, FDMn=0, eta_db_path=None):
+
+    def LL(x, CrysList, exposure, data):
+        N_Ne = len(data[0])
+        mx = x[0]
+        sig = x[1]
+        rates = np.zeros((len(CrysList), N_Ne))
+        for i in range(len(CrysList)):
+            rates[i] = exposure[i]*CrysList[i].Rate(mx, xsec=sig)
+        return _t_mu(data.flatten(), rates.flatten())[0]
+
+    CrysL = []
+    for vv in vE:
+        CrysL.append(Crystal_DMe(material, save_loc=eta_db_path, vdf=vdf,
+                                 vparams=[v0, vv, vesc, p], FDMn=FDMn))
+
+    init_xsec = CrysL[0].sig_test
+    init_mass = 10e6 # eV
+    init = [init_mass, init_xsec]
+
+    return minimize(LL, init, args=(CrysL, exposure, data),
+                    method='Nelder-Mead').x
