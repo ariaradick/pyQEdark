@@ -122,6 +122,9 @@ class Crystal_DMe(DM_Halo):
         """
         return _q/(2*_mx) + _Ee/_q
 
+    def _dvmin_dmx(self,_q,_Ee,_mx):
+        return -_q/(2*_mx**2)
+
     def FDM(self, _q):
         """
         Dark matter - electron scattering form factor
@@ -135,10 +138,9 @@ class Crystal_DMe(DM_Halo):
         return (m_e*_mx)/(m_e + _mx)
 
     def get_evals(self, Ne_min=1, Ne_max=12):
+        Ne_list = np.arange(Ne_min-1, Ne_max+1)
         binsize = self.dE_bin
-        firstE = self.Egap + (Ne_min-1)*binsize
-        finalE = int( (Ne_max*binsize + self.Egap) )
-        evals = np.arange(firstE, finalE+binsize, binsize)
+        evals = self.Egap + binsize*Ne_list
         return evals
 
     def EtaGrid(self, _mx):
@@ -152,6 +154,19 @@ class Crystal_DMe(DM_Halo):
         Vmin = self.vmin(Q, E, _mx)
 
         return self.eta(Vmin)
+
+    def dEta_dmX_Grid(self, _mx):
+        """
+        Calculates eta at each E and q value in our grid.
+        """
+        q_list = np.arange(1,self.nq+1)*self.dq
+        E_list = np.arange(1,self.nE+1)*self.dE
+
+        E, Q = np.meshgrid(E_list, q_list)
+        Vmin = self.vmin(Q, E, _mx)
+        dvmin_dmx = self._dvmin_dmx(Q,E,_mx)
+
+        return self._deta_dvmin(Vmin)*dvmin_dmx
 
     def _rateNe(self, mx, ne, etas_):
         binsize = self.dE_bin
@@ -231,6 +246,75 @@ class Crystal_DMe(DM_Halo):
             else:
                 return np.sum(rates, axis=1)*corr*xsec_corr
 
+    def _dR_dmx(self, mX, xsec=None, binned=True, out_unit='kgy', **kwargs):
+
+        self.set_params(**kwargs)
+
+        if xsec is None:
+            xsec_corr = 1
+        else:
+            xsec_corr = xsec / self.sig_test
+
+        if out_unit == 'nat':
+            corr = 1
+        elif out_unit == 'kgy':
+            corr = c_light**2*sec2year / (hbar*evtoj)
+
+        mX = np.atleast_1d(mX)
+        mX_MeV = np.around(mX*1e-6, decimals=6)
+        N_mX = len(mX)
+
+        if binned:
+            if 'Ne' in kwargs.keys():
+                Ne_list = np.atleast_1d(kwargs['Ne'])
+            else:
+                if 'Ne_min' in kwargs.keys():
+                    Ne_min = kwargs['Ne_min']
+                else:
+                    Ne_min = 1
+
+                if 'Ne_max' in kwargs.keys():
+                    Ne_max = kwargs['Ne_max']
+                else:
+                    Ne_max = 12
+                Ne_list = np.arange(Ne_min, Ne_max+1)
+
+        else:
+            Ne_list = np.arange(1,13)
+
+        N_Ne = len(Ne_list)
+
+        rates = np.zeros( (N_mX, N_Ne) )
+
+        for i in range(N_mX):
+            etas = self.EtaGrid(mX[i])
+            false_etas = self.dEta_dmX_Grid(mX[i])
+            pref1 = 1/m_e**2 * self.mu_xe(mX[i])**2 / mX[i]**3 * \
+                    ( 2*mX[i] * (m_e+mX[i]) - 3*(m_e+mX[i])**2 )
+            for j in range(N_Ne):
+                rates[i,j] = self._rateNe(mX[i], Ne_list[j], false_etas) + \
+                             self._rateNe(mX[i], Ne_list[j], etas) * pref1
+
+        if binned:
+            if N_mX == 1:
+                return rates[0]*corr*xsec_corr
+            else:
+                return rates*corr*xsec_corr
+
+        else:
+            if N_mX == 1:
+                return np.sum(rates[0])*corr*xsec_corr
+            else:
+                return np.sum(rates, axis=1)*corr*xsec_corr
+
+    def _dR_dsig(self, mX, xsec=None, binned=True, out_unit='kgy', **kwargs):
+        if xsec is None:
+            return self.Rate(mX, xsec=xsec, binned=binned, out_unit=out_unit,
+                             **kwargs) / self.sig_test
+        else:
+            return self.Rate(mX, xsec=xsec, binned=binned, out_unit=out_unit,
+                             **kwargs) / xsec
+
     def sig_min(self, *args, N_event=3, out_unit='cm', **kwargs):
         self.set_params(**kwargs)
         corr = c_light**2*sec2year / (hbar*evtoj)
@@ -262,3 +346,10 @@ class Crystal_DMe(DM_Halo):
             output_ = N_event * sigtest_m / ( self.Rate(mX, binned=False) * \
                       exposure )
             return output_*corr_dict[out_unit]
+
+    def _deta_dvmin(self, vmin):
+        from pyQEdark.etas import detaSHM_dvmin, detaTsa_dvmin, detaMSW_dvmin
+        vdf_dict = {'shm' : detaSHM_dvmin,
+                    'tsa' : detaTsa_dvmin,
+                    'msw' : detaMSW_dvmin}
+        return vdf_dict[self.vdf](vmin, self.vparams)

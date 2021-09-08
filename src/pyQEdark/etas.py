@@ -11,7 +11,7 @@ date created: 5/16/20
 import numpy as np
 from scipy.interpolate import interp1d
 from scipy.special import erf
-from scipy.integrate import nquad, quad, trapezoid
+from scipy.integrate import nquad, quad, trapezoid, quad_vec, odeint
 from pyQEdark.constants import ckms, ccms, c_light
 
 def etaSHM(*args):
@@ -61,6 +61,49 @@ def etaSHM(*args):
         return eta
     else:
         return eta(vmin)
+
+def detaSHM_dvmin(*args):
+    if len(args) == 1:
+        return_func = True
+        _params = args[0]
+
+    elif len(args) == 2:
+        return_func = False
+        vmin, _params = args
+
+    else:
+        raise TypeError('Wrong number of arguments!')
+
+    v0 = _params[0]
+    vE = _params[1]
+    vesc = _params[2]
+
+    KK=v0**3*(-2.0*np.exp(-vesc**2/v0**2)*np.pi*vesc/v0+np.pi**1.5*erf(vesc/v0))
+
+    def deta_dvmin_a(_vmin):
+        pref = np.exp(-(vE+_vmin)**2/v0**2)*np.pi*v0**2 / (2*KK*vE**2*_vmin)
+        alpha = v0**2 + 2 * vE * _vmin
+        beta = np.exp(4*vE*_vmin/v0**2) * (v0**2-2*vE*_vmin)
+        return pref*(beta-alpha)
+
+    def deta_dvmin_b(_vmin):
+        pref = np.exp(-(vE+_vmin)**2/v0**2)*np.pi*v0**2 / (2*KK*vE**2*_vmin)
+        gamma = np.exp((vE-vesc+_vmin)*(vE+vesc-_vmin)/v0**2) * \
+               (v0**2-vE**2+vesc**2-_vmin**2)
+        beta = np.exp(4*vE*_vmin/v0**2) * (v0**2-2*vE*_vmin)
+        return pref*(beta-gamma)
+
+    deta_dvmin = lambda vmin: np.piecewise( vmin,
+                                     [ vmin <= (vesc-vE),
+                                       np.logical_and(vmin > (vesc-vE),
+                                                      vmin <= (vesc+vE)),
+                                       vmin > (vesc+vE) ],
+                                     [ deta_dvmin_a, deta_dvmin_b, 0 ] )
+
+    if return_func:
+        return deta_dvmin
+    else:
+        return deta_dvmin(vmin)
 
 def etaTsa(*args):
 
@@ -129,6 +172,63 @@ def etaTsa(*args):
         return eta
     else:
         return eta(vmin)
+
+def detaTsa_dvmin(*args):
+
+    if len(args) == 1:
+        return_func = True
+        _params = args[0]
+
+    elif len(args) == 2:
+        return_func = False
+        vmin, _params = args
+
+    else:
+        raise TypeError('Wrong number of arguments!')
+
+    v0   = _params[0]
+    vE   = _params[1]
+    vesc = _params[2]
+    q = 1 - v0**2 / vesc**2
+
+    if q == 1:
+        tsa_ = lambda vx: vx**2*np.exp(-vx**2/v0**2)
+        func = lambda vx2: np.exp(-vx2/v0**2)
+
+    else:
+        tsa_ = lambda vx: vx**2*(1-(1-q)*vx**2/v0**2)**(1/(1-q))
+        func = lambda vx2: (1-(1-q)*vx2/v0**2)**(1/(1-q))
+
+    tsa_inttest = lambda vx: np.piecewise(vx, [vx <= vesc, vx > vesc],
+                                          [tsa_, 0])
+
+    K_=4*np.pi*quad(tsa_inttest, 0, vesc)[0]
+
+    def deta_dvmin_a(_vmin):
+        f_to_int = lambda cth: _vmin * cth / K_ * \
+                               func( _vmin**2+vE**2+2*_vmin*vE*cth )
+        return 2*np.pi*quad_vec(f_to_int, -1, 1)[0]
+
+    def deta_dvmin_b(_vmin):
+        f_to_int = lambda cth: _vmin * cth / K_ * \
+                               func( _vmin**2+vE**2+2*_vmin*vE*cth )
+        bound_up = (-vE**2 + vesc**2 - _vmin**2) / (2 * vE * _vmin)
+        return 2*np.pi*quad(f_to_int, -1, bound_up)[0]
+
+    deta_dvmin_b_vec = np.vectorize(deta_dvmin_b)
+
+    deta_dvmin = lambda vmin: np.piecewise( vmin,
+                                     [ vmin <= (vesc-vE),
+                                       np.logical_and(vmin > (vesc-vE),
+                                                      vmin <= (vesc+vE)),
+                                       vmin > (vesc+vE) ],
+                                     [ deta_dvmin_a,
+                                       deta_dvmin_b_vec, 0 ] )
+
+    if return_func:
+        return deta_dvmin
+    else:
+        return deta_dvmin(vmin)
 
 def etaTsa_q(*args):
 
@@ -267,6 +367,62 @@ def etaMSW(*args):
         return eta
     else:
         return eta(vmin)
+
+def detaMSW_dvmin(*args):
+
+    if len(args) == 1:
+        return_func = True
+        _params = args[0]
+
+    elif len(args) == 2:
+        return_func = False
+        vmin, _params = args
+
+    else:
+        raise TypeError('Wrong number of arguments!')
+
+    v0 = _params[0]
+    vE = _params[1]
+    vesc = _params[2]
+    p = _params[3]
+
+    def msw(vx):
+        return vx**2*np.exp(-vx/v0)*(vesc**2-vx**2)**p
+
+    msw_inttest = lambda vx: np.piecewise( vx,
+                                           [vx <= vesc, vx > vesc],
+                                           [msw, 0] )
+
+    K_=4*np.pi*quad(msw_inttest, 0, vesc)[0]
+
+    def func(vx2):
+        return np.exp(-np.sqrt(vx2)/v0)*(vesc**2-vx2)**p
+
+    def deta_dvmin_a(_vmin):
+        f_to_int = lambda cth: _vmin * cth / K_ * \
+                               func( _vmin**2+vE**2+2*_vmin*vE*cth )
+        return 2*np.pi*quad_vec(f_to_int, -1, 1)[0]
+
+    def deta_dvmin_b(_vmin):
+        f_to_int = lambda cth: _vmin * cth / K_ * \
+                               func( _vmin**2+vE**2+2*_vmin*vE*cth )
+        bound_up = (-vE**2 + vesc**2 - _vmin**2) / (2 * vE * _vmin)
+        return 2*np.pi*quad(f_to_int, -1, bound_up)[0]
+
+    deta_dvmin_b_vec = np.vectorize(deta_dvmin_b)
+
+    deta_dvmin = lambda vmin: np.piecewise( vmin,
+                                     [ vmin <= (vesc-vE),
+                                       np.logical_and(vmin > (vesc-vE),
+                                                      vmin <= (vesc+vE)),
+                                       vmin > (vesc+vE) ],
+                                     [ deta_dvmin_a,
+                                       deta_dvmin_b_vec, 0 ] )
+
+    if return_func:
+        return deta_dvmin
+    else:
+        return deta_dvmin(vmin)
 
 def etaDebris(vmin, _params):
 
