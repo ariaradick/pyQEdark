@@ -38,27 +38,7 @@ class Crystal_DMe(DM_Halo):
     vparams : list of parameters corresponding to the chosen vdf [nat. units]
     """
 
-    def __init__(self, material, save_loc=None, **kwargs):
-
-        self.save_loc = save_loc
-
-        if self.save_loc is not None:
-            def adapt_array(arr):
-                out = io.BytesIO()
-                np.save(out, arr)
-                out.seek(0)
-                return sqlite3.Binary(out.read())
-
-            def convert_array(text):
-                out = io.BytesIO(text)
-                out.seek(0)
-                return np.load(out)
-
-            sqlite3.register_adapter(np.ndarray, adapt_array)
-            sqlite3.register_converter("array", convert_array)
-
-            if not osp.exists(self.save_loc):
-                self._init_db()
+    def __init__(self, material, **kwargs):
 
         self._setup_mat(material)
 
@@ -77,9 +57,6 @@ class Crystal_DMe(DM_Halo):
 
         self.set_params(**defaults)
         self.set_params(**kwargs)
-
-        if self.save_loc is not None:
-            self.vdf_id = self._get_vdf_id()
 
     def _setup_mat(self, material):
 
