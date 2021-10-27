@@ -9,9 +9,13 @@ date created: 5/16/20
 """
 
 import numpy as np
+from scipy import LowLevelCallable
 from scipy.interpolate import interp1d
 from scipy.special import erf
 from scipy.integrate import nquad, quad, trapezoid, quad_vec, odeint
+from numba import cfunc
+from numba.types import intc, CPointer, float64
+
 from pyQEdark.constants import ckms, ccms, c_light
 
 def etaSHM(*args):
@@ -302,11 +306,15 @@ def etaTsa_q(*args):
     else:
         return eta(vmin)
 
-def etaMSW(*args):
+def etaMSW(*args, method='fast', N_MC=100000):
 
     """
     empirical model by Mao, Strigari, Weschler arXiv:1210.2721
     params = [v0, vE, vesc, p], input parameters must be scalars
+
+    method = 'fast' : uses monte-carlo, for ~.5% error compared to nquad
+           = 'slow' : uses scipy.integrate.nquad, which is more accurate, but
+                      ~300 times slower
     """
 
     if len(args) == 1:
@@ -320,48 +328,113 @@ def etaMSW(*args):
     else:
         raise TypeError('Wrong number of arguments!')
 
-    v0 = _params[0]
-    vE = _params[1]
-    vesc = _params[2]
-    p = _params[3]
+    v0, vE, vesc, p = _params
 
-    def msw(vx):
-        return vx**2*np.exp(-vx/v0)*(vesc**2-vx**2)**p
+    @cfunc(float64(intc, CPointer(float64)))
+    def msw_un_cfunc(n, args):
+        v, v0, vesc, p = (args[0], args[1], args[2], args[3])
+        if v <= vesc:
+            return v**2*np.exp(-v/v0)*(vesc**2-v**2)**p
+        else:
+            return 0
 
-    msw_inttest = lambda vx: np.piecewise( vx,
-                                           [vx <= vesc, vx > vesc],
-                                           [msw, 0] )
+    msw_un_LLC = LowLevelCallable(msw_un_cfunc.ctypes)
 
-    K_=4*np.pi*quad(msw_inttest, 0, vesc)[0]
+    KK = 4*np.pi*quad( msw_un_LLC, 0, vesc, args=(v0, vesc, p) )[0]
 
-    def func(vx2):
-        return np.exp(-np.sqrt(vx2)/v0)*(vesc**2-vx2)**p
+    if method == 'fast':
 
-    def eta_a(_vmin):
-        def bounds_cosq():
-            return [-1,1]
-        def bounds_vX(cosq):
-            return [_vmin, -cosq*vE+np.sqrt((cosq**2-1)*vE**2+vesc**2)]
-        def intfunc(vx,cosq):
-            return (2*np.pi/K_)*vx*func(vx**2+vE**2+2*vx*vE*cosq)
-        return nquad(intfunc, [bounds_vX,bounds_cosq])[0]
+        def msw_un(vx):
+            return np.exp(-vx/v0)*(vesc**2-vx**2)**p
 
-    def eta_b(_vmin):
-        def bounds_cosq(vx):
-            return [-1, (vesc**2-vE**2-vx**2)/(2*vx*vE)]
-        def bounds_vX():
-            return [_vmin, vE+vesc]
-        def intfunc(cosq,vx):
-            return (2*np.pi/K_)*vx*func(vx**2+vE**2+2*vx*vE*cosq)
-        return nquad(intfunc, [bounds_cosq,bounds_vX])[0]
+        msw_fn = lambda vx: np.piecewise( vx,
+                                          [ vx <= vesc, vx > vesc],
+                                          [ msw_un, 0] )
 
-    eta = lambda vmin: np.piecewise( vmin,
-                                     [ vmin <= (vesc-vE),
-                                       np.logical_and(vmin > (vesc-vE),
-                                                      vmin <= (vesc+vE)),
-                                       vmin > (vesc+vE) ],
-                                     [ np.vectorize(eta_a),
-                                       np.vectorize(eta_b), 0 ] )
+        def eta(vmin):
+            vmin = np.atleast_1d(vmin)
+
+            v1 = vmin.min()
+            v2 = vE+vesc
+
+            c1,c2 = (-1,1)
+
+            A = (v2-v1)*(c2-c1)
+
+            rando_v = (v2-v1) * np.random.random_sample(size=N_MC) + v1
+            rando_c = (c2-c1) * np.random.random_sample(size=N_MC) + c1
+
+            vv = np.sqrt(rando_v**2 + vE**2 + 2*rando_v*vE*rando_c)
+            f_vals = rando_v*msw_fn(vv)
+
+            I = np.zeros_like(vmin)
+            for i in range(len(vmin)):
+                f_tmp = np.zeros(N_MC)
+                is_greater_than_vmin = rando_v >= vmin[i]
+                f_tmp[:] = f_vals[:] * is_greater_than_vmin[:]
+                I[i] = np.sum(f_tmp[:])
+
+            # I = np.zeros_like(vmin)
+            # for i in range(N_MC):
+            #     less_than_v = vmin <= rando_v[i]
+            #     I += f_vals[i] * less_than_v
+
+            I *= A*2*np.pi / (N_MC * KK)
+            return I
+
+    elif method == 'slow':
+        def func(vx2):
+            return np.exp(-np.sqrt(vx2)/v0)*(vesc**2-vx2)**p
+
+        def eta_a(_vmin):
+            def bounds_cosq(KK, v0, vE, vesc, p):
+                return [-1,1]
+
+            def bounds_vX(cosq, KK, v0, vE, vesc, p):
+                return [_vmin, -cosq*vE+np.sqrt((cosq**2-1)*vE**2+vesc**2)]
+
+            @cfunc(float64(intc, CPointer(float64)))
+            def intfunc(n, args):
+                vx, cosq, KK, v0, vE, vesc, p = (args[0], args[1], args[2],
+                                                 args[3], args[4], args[5],
+                                                 args[6])
+                vv = vx**2 + vE**2 + 2 * vx * vE * cosq
+                ff = np.exp(-np.sqrt(vv)/v0)*(vesc**2-vv)**p
+                return (2*np.pi/KK)*vx*ff
+
+            intfunc_LLC = LowLevelCallable(intfunc.ctypes)
+
+            return nquad(intfunc_LLC, [bounds_vX,bounds_cosq],
+                         args=(KK, v0, vE, vesc, p))[0]
+
+        def eta_b(_vmin):
+            def bounds_cosq(vx, KK, v0, vE, vesc, p):
+                return [-1, (vesc**2-vE**2-vx**2)/(2*vx*vE)]
+
+            def bounds_vX(KK, v0, vE, vesc, p):
+                return [_vmin, vE+vesc]
+
+            @cfunc(float64(intc, CPointer(float64)))
+            def intfunc(n, args):
+                cosq, vx, KK, v0, vE, vesc, p = (args[0], args[1], args[2],
+                                                 args[3], args[4], args[5],
+                                                 args[6])
+                vv = vx**2 + vE**2 + 2 * vx * vE * cosq
+                ff = np.exp(-np.sqrt(vv)/v0)*(vesc**2-vv)**p
+                return (2*np.pi/KK)*vx*ff
+
+            intfunc_LLC = LowLevelCallable(intfunc.ctypes)
+
+            return nquad(intfunc_LLC, [bounds_cosq,bounds_vX],
+                         args=(KK, v0, vE, vesc, p))[0]
+
+        eta = lambda vmin: np.piecewise( vmin,
+                                         [ vmin <= (vesc-vE),
+                                           np.logical_and(vmin > (vesc-vE),
+                                                          vmin <= (vesc+vE)),
+                                           vmin > (vesc+vE) ],
+                                         [ np.vectorize(eta_a),
+                                           np.vectorize(eta_b), 0 ] )
 
     if return_func:
         return eta

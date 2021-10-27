@@ -388,7 +388,7 @@ class DM_Halo:
             return tmp
 
         else:
-            N_vmin = 1000
+            N_vmin = 10000
             Vmin = np.linspace(0, (self.vE+self.vesc+1)/ckms, N_vmin)
             Eta = self.eta_fn(Vmin*self.in_vcorr)*self.out_vcorr
             insert_eta((Vmin, Eta, vdf_id), db_path)
@@ -399,7 +399,7 @@ class DM_Halo:
             vmin, eta = self._get_eta_vals()
 
         else:
-            N_vmin = 1000
+            N_vmin = 10000
             vmin = np.linspace(0, (self.vE+self.vesc+1)/ckms, N_vmin)
             eta = self.eta_fn(vmin*self.in_vcorr)*self.out_vcorr
 

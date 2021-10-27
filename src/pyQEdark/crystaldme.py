@@ -143,6 +143,15 @@ class Crystal_DMe(DM_Halo):
         evals = self.Egap + binsize*Ne_list
         return evals
 
+    def _vmin_grid(self, _mx):
+        q_list = np.arange(1,self.nq+1)*self.dq
+        E_list = np.arange(1,self.nE+1)*self.dE
+
+        E, Q = np.meshgrid(E_list, q_list)
+        Vmin = self.vmin(Q, E, _mx)
+
+        return Vmin
+
     def EtaGrid(self, _mx):
         """
         Calculates eta at each E and q value in our grid.
