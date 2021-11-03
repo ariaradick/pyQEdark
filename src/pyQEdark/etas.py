@@ -312,7 +312,7 @@ def etaMSW(*args, method='fast', N_MC=100000):
     empirical model by Mao, Strigari, Weschler arXiv:1210.2721
     params = [v0, vE, vesc, p], input parameters must be scalars
 
-    method = 'fast' : uses monte-carlo, for ~.5% error compared to nquad
+    method = 'fast' : uses monte carlo, for ~.5% error compared to nquad
            = 'slow' : uses scipy.integrate.nquad, which is more accurate, but
                       ~300 times slower
     """

@@ -1,3 +1,4 @@
+import numpy as np
 from pyQEdark.constants import ckms
 
 vEfid = 232/ckms # (km/s), velocity of earth
@@ -30,5 +31,21 @@ pmax = 3.0
 vflowfid = 340/ckms # (km/s)
 vflowmin = 300/ckms
 vflowmax = 500/ckms
+
+# Less simple parameters:
+v_sun = np.array([11.1, 247.24, 7.25])/ckms
+vE_solar = 29.79/ckms
+epsilon_1 = np.array([0.9940, 0.1095, 0.0031])
+epsilon_2 = np.array([-0.0517, 0.4945, -0.8677])
+
+omega = 2*np.pi/365.25 # days^-1
+t_Mar21 = 79.26 # days
+
+# note that time is in days for vE(t)
+vE_fn_solar = lambda t: vE_solar * ( epsilon_1*np.cos(omega*(t-t_Mar21)) + \
+                                     epsilon_2*np.sin(omega*(t-t_Mar21)) )
+
+v_lab_max = np.sqrt( np.vdot(vE_fn_solar(t_Mar21)+v_sun,
+                             vE_fn_solar(t_Mar21)+v_sun) )
 
 del ckms

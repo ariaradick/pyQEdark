@@ -6,10 +6,9 @@ date: 7/19/21
 """
 
 import numpy as np
-from scipy.integrate import quad_vec
+from scipy.integrate import quad_vec, nquad
 from scipy.interpolate import interp1d
-from os import path as osp
-import sqlite3
+from scipy.optimize import minimize
 from pyQEdark.constants import ckms, ccms, c_light
 
 class DM_Halo:
@@ -219,3 +218,93 @@ class DM_Halo:
 
         return interp1d(vmin*self.in_vcorr, eta/self.out_vcorr,
                         bounds_error=False, fill_value=0.)
+
+class Stream:
+    def __init__(self, Mu, Sigma, vesc, in_unit='kms', out_unit='kms',
+                 N_MC=1000000):
+
+        from pyQEdark.vdfparams.nat import vE_fn_solar, v_sun
+        self._v_lab = lambda t: (vE_fn_solar(t) + v_sun)
+
+        corr_dict = { 'kms' : ckms,
+                      'cms' : ccms,
+                      'ms'  : c_light,
+                      'nat' : 1 }
+
+        self.in_vcorr = corr_dict[in_unit]
+        self.out_vcorr = corr_dict[out_unit]
+        self.vcorr = corr_dict[out_unit] / corr_dict[in_unit]
+
+        self.Mu = Mu / self.in_vcorr
+        sx2 = Sigma[0,0]
+        sy2 = Sigma[1,1]
+        sz2 = Sigma[2,2]
+        self.s2 = np.array([sx2, sy2, sz2]) / self.in_vcorr**2
+        self.vesc = vesc / self.in_vcorr
+        self.N_MC = N_MC
+
+        v2 = vesc / self.in_vcorr + np.sqrt(np.sum(self._v_lab(79.26)**2))
+        ph2 = 2*np.pi
+        th2 = np.pi
+
+        self._Volume_MC = v2*ph2*th2
+
+        V = v2 * np.random.random_sample(size=N_MC)
+        Ph = ph2 * np.random.random_sample(size=N_MC)
+        Th = th2 * np.random.random_sample(size=N_MC)
+
+        self._V = V
+        self._Ph = Ph
+        self._Th = Th
+
+        self._vv = np.array([V*np.cos(Ph)*np.sin(Th),
+                             V*np.sin(Ph)*np.sin(Th),
+                             V*np.cos(Th)])
+
+        def f_to_norm(v,phi,theta):
+            v_vec = np.array([v*np.cos(phi)*np.sin(theta),
+                              v*np.sin(phi)*np.sin(theta),
+                              v*np.cos(theta)])
+
+            ee = v**2 * np.sin(theta) * \
+                 np.exp( -.5*np.sum( (v_vec-self.Mu)**2/self.s2 ) )
+            return ee
+
+        self.KK = nquad(f_to_norm, [(0,self.vesc), (0,2*np.pi), (0,np.pi)])[0]
+
+        neg_Mu_lab = lambda t: -np.sqrt( np.sum((self.Mu - self._v_lab(t))**2) )
+        self.tc = minimize(neg_Mu_lab, 0.).x
+
+    def f_galactic(self, v):
+        v_ = v[:] / self.in_vcorr
+        len_v = np.sqrt( np.sum(v_**2) )
+        ee = (1/self.KK) * np.exp( -.5*np.sum( (v_-self.Mu)**2/self.s2 ) ) * \
+             np.heaviside(self.vesc - len_v, 0)
+        return ee / self.out_vcorr
+
+    def f_lab(self, v, t):
+        v_ = v[:] / self.in_vcorr
+        v_lab = self._v_lab(t)
+        len_v = np.sqrt( np.sum((v_+v_lab)**2) )
+        ee = (1/self.KK) * np.exp(-.5*np.sum((v_+v_lab-self.Mu)**2/self.s2)) * \
+             np.heaviside(self.vesc - len_v, 0)
+        return ee / self.out_vcorr
+
+    def eta(self, vmin, t):
+        vmin = np.atleast_1d(vmin) / self.in_vcorr
+
+        f_vals = np.zeros(self.N_MC)
+        for i in range(self.N_MC):
+            f_vals[i] = self._V[i] * np.sin(self._Th[i]) * \
+                        self.f_lab(self._vv[:,i]*self.in_vcorr, t) * \
+                        self.out_vcorr
+
+        I = np.zeros_like(vmin)
+        for i in range(len(vmin)):
+            f_tmp = np.zeros(self.N_MC)
+            grtr_than_vmin = self._V >= vmin[i]
+            f_tmp[:] = f_vals[:] * grtr_than_vmin[:]
+            I[i] = np.sum(f_tmp[:])
+
+        I *= self._Volume_MC / self.N_MC / self.out_vcorr
+        return I
