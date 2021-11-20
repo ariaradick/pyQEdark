@@ -6,9 +6,11 @@ date: 7/19/21
 """
 
 import numpy as np
-from scipy.integrate import quad_vec, nquad
+from numpy.linalg import norm
+from scipy.integrate import quad_vec, nquad, quad
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize
+from scipy.special import erf
 from pyQEdark.constants import ckms, ccms, c_light
 
 class DM_Halo:
@@ -212,7 +214,7 @@ class DM_Halo:
                              if k in custom_keys)
 
     def make_etaInterp(self):
-        N_vmin = 10000
+        N_vmin = 1000
         vmin = np.linspace(0, (self.vE+self.vesc+1)/ckms, N_vmin)
         eta = self.eta_fn(vmin*self.in_vcorr)*self.out_vcorr
 
@@ -223,7 +225,8 @@ class Stream:
     def __init__(self, Mu, Sigma, vesc, in_unit='kms', out_unit='kms',
                  N_MC=1000000):
 
-        from pyQEdark.vdfparams.nat import vE_fn_solar, v_sun
+        from pyQEdark.vdfparams.nat import vE_fn_solar, v_sun, \
+                                           epsilon_1, epsilon_2
         self._v_lab = lambda t: (vE_fn_solar(t) + v_sun)
 
         corr_dict = { 'kms' : ckms,
@@ -272,8 +275,23 @@ class Stream:
 
         self.KK = nquad(f_to_norm, [(0,self.vesc), (0,2*np.pi), (0,np.pi)])[0]
 
+
+
         neg_Mu_lab = lambda t: -np.sqrt( np.sum((self.Mu - self._v_lab(t))**2) )
-        self.tc = minimize(neg_Mu_lab, 0.).x
+        self.tc = minimize(neg_Mu_lab, 79.26, method='Nelder-Mead').x[0]
+
+        Mu_hat_solar = (self.Mu - v_sun) / np.linalg.norm(self.Mu - v_sun)
+        epsilon_1_hat = epsilon_1 / np.linalg.norm(epsilon_1)
+        epsilon_2_hat = epsilon_2 / np.linalg.norm(epsilon_2)
+        self.b = np.sqrt( np.vdot(Mu_hat_solar, epsilon_1_hat)**2 + \
+                          np.vdot(Mu_hat_solar, epsilon_2_hat)**2 )
+
+        # negF_tavg = lambda v: -quad(lambda t: self.F_lab(v,t), 0, 365.25)[0] / \
+        #                       365.25
+        # self.v_mp = minimize(negF_tavg, vecMag(self._v_lab(79.26)),
+        #                      method='Nelder-Mead').x[0]
+
+        self.v_mp = -quad(neg_Mu_lab, 0, 365.25)[0] / 365.25
 
     def f_galactic(self, v):
         v_ = v[:] / self.in_vcorr
@@ -289,6 +307,29 @@ class Stream:
         ee = (1/self.KK) * np.exp(-.5*np.sum((v_+v_lab-self.Mu)**2/self.s2)) * \
              np.heaviside(self.vesc - len_v, 0)
         return ee / self.out_vcorr
+
+    def F_lab(self, v, t):
+        """
+        Calculates integral(f_lab dOmega)
+
+        Note that v is NOT a 3-vector. It is the magnitude of the velocity here.
+        """
+        v_ = np.atleast_1d(v) / self.in_vcorr
+        v_lab = self._v_lab(t)
+        I = np.zeros_like(v_)
+
+        for j in range(len(v_)):
+            vv = np.array([v_[j]*np.cos(self._Ph)*np.sin(self._Th),
+                           v_[j]*np.sin(self._Ph)*np.sin(self._Th),
+                           v_[j]*np.cos(self._Th)])
+
+            f_vals = np.zeros(self.N_MC)
+            for i in range(self.N_MC):
+                f_vals[i] = v_[j]**2 * np.sin(self._Th[i]) * \
+                            self.f_lab(vv[:,i], t)
+
+            I[j] = np.sum(f_vals) * 2 * np.pi**2 / self.N_MC
+        return I
 
     def eta(self, vmin, t):
         vmin = np.atleast_1d(vmin) / self.in_vcorr
@@ -308,3 +349,71 @@ class Stream:
 
         I *= self._Volume_MC / self.N_MC / self.out_vcorr
         return I
+
+class SimpleStream():
+    """
+    A DM stream with uniform dispersion sigma.
+    """
+    def __init__(self, Mu_gal, sigma, vesc, in_unit='kms', out_unit='kms'):
+
+        from pyQEdark.vdfparams.nat import vE_fn_solar, v_sun, \
+                                           epsilon_1, epsilon_2
+        self._v_lab = lambda t: (vE_fn_solar(t) + v_sun)
+
+        corr_dict = { 'kms' : ckms,
+                      'cms' : ccms,
+                      'ms'  : c_light,
+                      'nat' : 1 }
+
+        self.in_vcorr = corr_dict[in_unit]
+        self.out_vcorr = corr_dict[out_unit]
+        self.vcorr = corr_dict[out_unit] / corr_dict[in_unit]
+
+        self._Mu_gal = Mu_gal / self.in_vcorr
+        sx2 = Sigma[0,0]
+        sy2 = Sigma[1,1]
+        sz2 = Sigma[2,2]
+        self._sig2 = sigma**2 / self.in_vcorr**2
+        self._vesc = vesc / self.in_vcorr
+
+        mu = norm(self._Mu_gal)
+
+        self.KK = np.pi*self._sig2**(3/2) * (\
+                  (-2*np.sqrt(np._sig2)/mu) * \
+                  np.exp(-(mu+self._vesc)**2 / (2*np._sig2)) * \
+                  (np.exp(2*mu*np._vesc/self._sig2)-1) + \
+                  np.sqrt(2*np.pi)*(erf((mu+self._vesc)/np.sqrt(2*self._sig2))-\
+                                    erf((mu-self._vesc)/np.sqrt(2*self._sig2))))
+
+        neg_Mu_lab=lambda t: -np.sqrt(np.sum((self._Mu_gal-self._v_lab(t))**2))
+        self.tc = minimize(neg_Mu_lab, 79.26, method='Nelder-Mead').x[0]
+
+        Mu_hat_solar = (self._Mu_gal - v_sun) / norm(self._Mu_gal - v_sun)
+        epsilon_1_hat = epsilon_1 / norm(epsilon_1)
+        epsilon_2_hat = epsilon_2 / norm(epsilon_2)
+        self.b = np.sqrt( np.vdot(Mu_hat_solar, epsilon_1_hat)**2 + \
+                          np.vdot(Mu_hat_solar, epsilon_2_hat)**2 )
+
+        negF_tavg = lambda v: -quad(lambda t: self.F_lab(v,t), 0, 365.25)[0] / \
+                              365.25
+        self.v_mp = minimize(negF_tavg, norm(self._v_lab(79.26)),
+                             method='Nelder-Mead').x[0]
+
+    def f_galactic(self, v_vec):
+        v_ = v_vec[:] / self.in_vcorr
+        len_v = norm(v_)
+        ee = (1/self.KK) * np.exp(-.5*np.sum((v_-self._Mu_gal)**2/self._sig2))*\
+             np.heaviside(self.vesc - len_v, 0)
+        return ee / self.out_vcorr
+
+    def f_lab(self, v_vec, t):
+        v_lab = self._v_lab(t)*self.in_vcorr
+        return self.f_galactic(v_vec+v_lab) / self.out_vcorr
+
+    def F_lab(self, v, t):
+        v_ = v / self.in_vcorr
+        v_lab = self._v_lab(t)
+        mu_lab = norm(self._Mu_gal - v_lab)
+        e1 = np.exp(-(mu_lab+v_)**2 / (2*self._sig2))
+        e2 = np.exp(2*mu_lab*v_/self._sig2)
+        return v_*self._sig2 / (mu_lab*self.KK) * e1 * (e2-1)

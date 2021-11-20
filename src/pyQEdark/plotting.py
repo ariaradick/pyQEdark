@@ -459,8 +459,8 @@ class Rate_figure:
 
         if plot_shm:
             self.fidvals = np.zeros( (self.N_mX, self.N_fdmn, self.N_bins) )
-            db_path = CrysObj.dpath
-            tmpCrys = Crystal_DMe('Si', db_path)
+            # db_path = CrysObj.dpath
+            tmpCrys = Crystal_DMe('Si')
             for j in range(self.N_fdmn):
                 tmpCrys.set_params( FDMn = self.fdmn[j] )
                 for i in range(self.N_mX):
