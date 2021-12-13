@@ -291,7 +291,13 @@ class Stream:
         # self.v_mp = minimize(negF_tavg, vecMag(self._v_lab(79.26)),
         #                      method='Nelder-Mead').x[0]
 
-        self.v_mp = -quad(neg_Mu_lab, 0, 365.25)[0] / 365.25
+        # self.v_mp = -quad(neg_Mu_lab, 0, 365.25)[0] / 365.25
+
+    def _calc_v_mp(self):
+        negF_tavg = lambda v: -quad(lambda t: self.F_lab(v,t), 0, 365.25)[0] / \
+                              365.25
+        self.v_mp = minimize(negF_tavg, norm(self.Mu-self._v_lab(79.26))).x[0]
+        return
 
     def f_galactic(self, v):
         v_ = v[:] / self.in_vcorr
