@@ -11,6 +11,9 @@ from pyQEdark.vdfparams.nat import v0fid, vescfid, v0new, vescnew, pfid, vEfid
 def p_from_Z(signif):
     return 1-norm.cdf(signif)
 
+def Z_from_p(p):
+    return norm.ppf(1-p)
+
 def chisq_test(data, theory, ddof=0):
     data_ = np.zeros_like(data)
     theory_ = np.zeros_like(theory)
