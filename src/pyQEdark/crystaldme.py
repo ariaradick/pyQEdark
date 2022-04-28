@@ -49,7 +49,7 @@ class Crystal_DMe(DM_Halo):
         self.vcorr = 1
 
         defaults = { 'rho_x' : .4e15 * c_light**3 * hbar**3,
-                     'sig_test' : 1e-41 / (hbar**2 * c_light**2),
+                     'sig_test' : 1e-37 / (hbar**2 * ccms**2),
                      'FDMn' : 0,
                      'vdf' : 'shm',
                      'vparams' : np.array([220, 232, 544]) / ckms,

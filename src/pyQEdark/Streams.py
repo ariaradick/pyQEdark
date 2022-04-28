@@ -10,6 +10,9 @@ Date Created: 3/15/2022
 import numpy as np
 from numpy.linalg import norm, inv, det
 from scipy.integrate import nquad
+from scipy.interpolate import interp1d, interp2d
+from scipy.stats import poisson
+from scipy.special import erf
 from pyQEdark.constants import ckms
 
 v_sun = np.array([11.1, 247.24, 7.25])/ckms # velocity of sun in galactic frame
@@ -28,6 +31,28 @@ eps_hat = np.array([epsilon_1/norm(epsilon_1),
 
 omega = 2*np.pi/365.25 # days^-1
 t_Mar21 = 79.26 # days
+
+# Parameters for some known stellar streams:
+Mu_gal_Sausage = np.array([0, 36.94, -2.92])/ckms
+Sigma_Sausage = np.diag([108.33**2, 62.60**2, 57.99**2])/ckms**2
+
+Mu_gal_Nyx = np.array([133.9, 130.17, 53.65])/ckms
+Sigma_Nyx = np.diag([67.13**2, 45.80**2, 65.82**2])/ckms**2
+
+Mu_gal_S1 = np.array([-34.2, -306.3, -64.4])/ckms
+Sigma_S1 = np.diag([81.9**2, 46.3**2, 62.9**2])/ckms**2
+
+Mu_gal_S2a = np.array([5.8, 163.6, -250.4])/ckms
+Sigma_S2a = np.diag([45.9**2, 13.8**2, 26.8**2])/ckms**2
+
+Mu_gal_S2b = np.array([-50.6, 138.5, 183.1])/ckms
+Sigma_S2b = np.diag([90.8**2, 25.0**2, 43.8**2])/ckms**2
+
+_Sig_mean = np.zeros(3)
+for i in range(3):
+    _Sig_mean[i] = np.mean([Sigma_Nyx[i,i], Sigma_S1[i,i], Sigma_S2a[i,i],
+                           Sigma_S2b[i,i]])
+sig_mean = norm(np.sqrt(_Sig_mean)) / np.sqrt(3)
 
 def vE_fn_solar(t):
     """
@@ -48,14 +73,14 @@ def Mu_lab(t, Mu_gal):
     """
     Determines the mean stream velocity in the lab frame at a time t
     t : units of days (t=0 corresponds to Jan 1 at 00:00)
-    mu_gal : mean stream velocity in the galactic frame (nat. units)
+    Mu_gal : mean stream velocity vector in the galactic frame (nat. units)
     """
     return norm(Mu_gal - v_sun - vE_fn_solar(t))
 
 def _calc_tc(Mu_gal):
     """
     Calculates the critical time t_c that maximizes mu_lab
-    mu_gal : mean stream velocity in the galactic frame (nat. units)
+    Mu_gal : mean stream velocity vector in the galactic frame (nat. units)
     """
     Mu_sol_hat = (Mu_gal - v_sun) / norm(Mu_gal - v_sun)
 
@@ -65,15 +90,22 @@ def _calc_tc(Mu_gal):
     tc2 = tc1 + 365.25/2
 
     if Mu_lab(tc1,Mu_gal) > Mu_lab(tc2,Mu_gal):
-        return tc1
+        tc = tc1
     else:
-        return tc2
+        tc = tc2
+
+    while tc < 0:
+        tc += 365.25
+    while tc > 365.25:
+        tc -= 365.25
+
+    return tc
 
 def _calc_lam(Mu_gal):
     """
     Calculates the angle λ between mu in the solar frame and the normal to
     Earth's rotational plane.
-    mu_gal : mean stream velocity in the galactic frame (nat. units)
+    Mu_gal : mean stream velocity vector in the galactic frame (nat. units)
     """
     Mu_sol_hat = (Mu_gal - v_sun) / norm(Mu_gal - v_sun)
     b3 = np.dot(Mu_sol_hat, eps_hat[2])
@@ -96,17 +128,17 @@ def _solve_for_Mu(Mu_norm, tc, lam, diagnostics=False):
 
     Z = np.sqrt(-vsb**2 + b2**2*(-vsa**2 + vsb**2) + 2*b1*b3*vsa*vsc - \
                 vsc**2 + 2*b2*vsb*(b1*vsa + b3*vsc) + \
-                b3**2*(-vsa**2 + vsc**2) + Mu_norm**2) * np.abs(b1)
+                b3**2*(-vsa**2 + vsc**2) + Mu_norm**2)
 
-    mu_sol_p = Z/b1 - b1*vsa - b2*vsb - b3*vsc
-    mu_sol_m = -Z/b1 - b1*vsa - b2*vsb - b3*vsc
+    mu_sol_p = Z - b1*vsa - b2*vsb - b3*vsc
+    mu_sol_m = -Z - b1*vsa - b2*vsb - b3*vsc
 
     if mu_sol_p < mu_sol_m:
         Z = -Z
 
-    mu1 = (1 - b1**2)*vsa - b1*b2*vsb - b1*b3*vsc + Z
-    mu2 = (b2**3*vsa+b1*vsb-b1*b2**2*vsb+b2*((-1+b3**2)*vsa-b1*b3*vsc+Z))/b1
-    mu3 = (b3**3*vsa+b1*vsc-b1*b3**2*vsc+b3*((-1+b2**2)*vsa-b1*b2*vsb+Z))/b1
+    mu1 = (1 - b1**2)*vsa - b1*b2*vsb - b1*b3*vsc + b1*Z
+    mu2 = (1 - b2**2)*vsb - b1*b2*vsa - b2*b3*vsc + b2*Z
+    mu3 = (1 - b3**2)*vsc - b1*b3*vsa - b2*b3*vsb + b3*Z
 
     Mu_gal_eps = np.array([mu1,mu2,mu3])
     Mu_gal = np.dot(np.transpose(eps_hat), Mu_gal_eps)
@@ -127,10 +159,6 @@ def _mu_solver_min(tc, lam):
     te_c = omega*(tc-t_Mar21)
     theta = te_c - np.pi
 
-    epsilon_3 = np.cross(epsilon_1, epsilon_2)
-    eps_hat = np.array([epsilon_1/norm(epsilon_1), epsilon_2/norm(epsilon_2),
-                        epsilon_3/norm(epsilon_3)])
-
     vs_eps = np.dot(eps_hat, v_sun)
 
     b1 = b*np.cos(theta)
@@ -144,13 +172,71 @@ def _mu_solver_min(tc, lam):
 
     return np.sqrt(under_sqrt)
 
+class Stream_Analytic():
+
+    def __init__(self, Mu_gal, sigma):
+        self.Mu_gal = Mu_gal
+        self.sigma = sigma
+
+        self.KK = np.sqrt((2*np.pi)**3)*sigma**3
+
+        self.tc = _calc_tc(self.Mu_gal)
+        self.lam = _calc_lam(self.Mu_gal)
+        self.b = np.sin(self.lam)
+
+        self._Mu_gal_calc = _solve_for_Mu(norm(self.Mu_gal), self.tc, self.lam)
+
+    def f_gal(self, v):
+        v_ = v[:]
+        vexp = norm(v_ - self.Mu_gal)
+        len_v = np.sqrt( np.sum(v_**2) )
+        ee = (1/self.KK) * np.exp( -.5*vexp**2/sigma**2 )
+        return ee
+
+    def f_lab(self, v, t):
+        v_ = v[:]
+        vlab = v_lab(t)
+        vexp = norm(v_ + vlab - self.Mu_gal)
+        ee = (1/self.KK) * np.exp( -.5*vexp**2/sigma**2 )
+        return ee
+
+    def F_lab(self, v, t):
+        vlab = v_lab(t)
+        mu_lab = norm(self.Mu_gal - vlab)
+        pref = 2*np.pi*v*self.sigma**2/mu_lab
+        ee1 = np.exp(-(v+mu_lab)**2/(2*self.sigma**2))
+        ee2 = np.exp(2*v*mu_lab / self.sigma**2) - 1
+        return pref*ee1*ee2/self.KK
+
+    def eta(self, vmin, t):
+        vlab = v_lab(t)
+        mu_lab = norm(self.Mu_gal - vlab)
+        pref = np.sqrt(2*np.pi**3)*self.sigma**3 / mu_lab
+        ee = erf((vmin+mu_lab)/(np.sqrt(2)*self.sigma)) - \
+             erf((vmin-mu_lab)/(np.sqrt(2)*self.sigma))
+        return pref*ee/self.KK
+
+class Stream_From_B_Analytic(Stream_Analytic):
+
+    def __init__(self, Mu_norm, tc, lam, sigma):
+        self.Mu_gal = _solve_for_Mu(Mu_norm, tc, lam)
+        self.sigma = sigma
+
+        self.KK = np.sqrt((2*np.pi)**3)*sigma**3
+
+        self.tc = tc
+        self._tc_calc = _calc_tc(self.Mu_gal)
+        self.lam = lam
+        self._lam_calc = _calc_lam(self.Mu_gal)
+        self.b = np.sin(self.lam)
+
 class _Stream_Functions:
     def _f_gal(self, v):
         v_ = v[:]
         vexp = v_ - self.Mu_gal
         len_v = np.sqrt( np.sum(v_**2) )
-        ee = (1/self.KK) * np.exp( -.5*np.dot( np.transpose(vexp), \
-                                               np.dot(inv(Sigma), vexp) ) )*\
+        ee = (1/self.KK) * np.exp( -.5*np.dot(np.transpose(vexp), \
+                                              np.dot(inv(self.Sigma), vexp)) )*\
              np.heaviside(self.vesc - len_v, 0)
         return ee
 
@@ -159,8 +245,8 @@ class _Stream_Functions:
         vlab = v_lab(t)
         vexp = v_ + vlab - self.Mu_gal
         len_v = np.sqrt( np.sum((v_+vlab)**2) )
-        ee = (1/self.KK) * np.exp( -.5*np.dot( np.transpose(vexp), \
-                                               np.dot(inv(Sigma), vexp) ) )*\
+        ee = (1/self.KK) * np.exp( -.5*np.dot(np.transpose(vexp), \
+                                              np.dot(inv(self.Sigma), vexp)) )*\
              np.heaviside(self.vesc - len_v, 0)
         return ee
 
@@ -169,7 +255,7 @@ class _Stream_Functions:
         vexp = v_ - self.Mu_gal
         len_v = np.sqrt( np.sum(v_**2) )
         ee = (1/self.KK) * np.exp( -.5*np.dot( np.transpose(vexp), \
-                                               np.dot(inv(Sigma), vexp) ) )
+                                               np.dot(inv(self.Sigma), vexp) ) )
         return ee
 
     def _f_lab_novesc(self, v, t):
@@ -178,7 +264,7 @@ class _Stream_Functions:
         vexp = v_ + vlab - self.Mu_gal
         len_v = np.sqrt( np.sum((v_+vlab)**2) )
         ee = (1/self.KK) * np.exp( -.5*np.dot( np.transpose(vexp), \
-                                               np.dot(inv(Sigma), vexp) ) )
+                                               np.dot(inv(self.Sigma), vexp) ) )
         return ee
 
     def F_lab(self, v, t):
@@ -228,10 +314,11 @@ class Stream(_Stream_Functions):
     matrix (Sigma), and the assumed escape velocity (vesc). All parameters are
     assumed to be in natural units.
     """
-    def __init__(self, Mu_gal, Sigma, vesc=None, N_MC=1000000):
+    def __init__(self, Mu_gal, Sigma, vesc=None, eta_path=None, N_MC=1000000):
         self.Mu_gal = Mu_gal
         self.Sigma = Sigma
         self.vesc = vesc
+        self._dpath = eta_path
         self.N_MC = N_MC
 
         vlabmax = norm(v_lab(t_Mar21))
@@ -240,6 +327,8 @@ class Stream(_Stream_Functions):
             v2 = vesc + vlabmax
         else:
             v2 = norm(self.Mu_gal) + 5*norm(self.Sigma) + vlabmax
+
+        self._v2 = v2
 
         ph2 = 2*np.pi
         th2 = np.pi
@@ -283,8 +372,11 @@ class Stream(_Stream_Functions):
         self.lam = _calc_lam(self.Mu_gal)
         self.b = np.sin(self.lam)
 
+        self._Mu_gal_calc = _solve_for_Mu(norm(self.Mu_gal), self.tc, self.lam)
+
 class Stream_From_B(_Stream_Functions):
-    def __init__(self, Mu_norm, tc, lam, Sigma, vesc=None, N_MC=1000000):
+    def __init__(self, Mu_norm, tc, lam, Sigma, vesc=None, eta_path=None,
+                 N_MC=1000000):
         self.Mu_gal = _solve_for_Mu(Mu_norm, tc, lam)
         self.Sigma = Sigma
         self.vesc = vesc
@@ -336,5 +428,122 @@ class Stream_From_B(_Stream_Functions):
             self.f_lab = self._f_lab_novesc
 
         self.tc = tc
+        self._tc_calc = _calc_tc(self.Mu_gal)
         self.lam = lam
+        self._lam_calc = _calc_lam(self.Mu_gal)
         self.b = np.sin(self.lam)
+
+def mu_sig_min(mX, exposure, Mus, TCs, Lams, Sigma, stream_frac,
+               test_xsec=1e-37, analytic=True):
+    """
+    Finds the |μ| value that minimizes the significance of a chi^2 test between
+    the SHM alone and the SHM with a stream at (tc, λ).
+
+    mX : mass of dark matter [eV]
+    exposure : exposure [kg y]
+    Mus : array of mu values to scan over [dimensionless]
+    TCs : array of critical times [days]
+    Lams : array of λ, the angle between the normal to earth's rotational plane
+           and μ_solar [rads]
+    Sigma : matrix of velocity dispersion squared [dimensionless]
+    stream_frac : fraction of DM contained in the stream
+    test_xsec : assumed DM-e cross-section value [cm^2]
+    """
+    from time import process_time
+    start = process_time()
+    from pyQEdark import Crystal_DMe, ccms, hbar
+    from pyQEdark.vdfparams.nat import v0new, vescnew, vE_fn
+    from pyQEdark.stats import chisq_test
+
+    if analytic:
+        from pyQEdark.Streams import Stream_From_B_Analytic as Stream_From_B
+    else:
+        from pyQEdark.Streams import Stream_From_B
+
+    TCs = np.atleast_1d(TCs)
+    Lams = np.atleast_1d(Lams)
+
+    test_xsec *= 1 / (hbar**2 * ccms**2)
+
+    Mu_Sig_Min = np.zeros(( len(TCs), len(Lams) ))
+
+    Stream_Si = Crystal_DMe('Si', sig_test=test_xsec, interp=False)
+    SHM_Si = Crystal_DMe('Si', sig_test=test_xsec)
+
+    for n in range(len(TCs)):
+        tc = TCs[n]
+
+        vE = norm(v_lab(tc))
+        SHM_Si.set_params(vparams=[v0new, vE, vescnew])
+        SHM_Rates = SHM_Si.Rate(mX, Ne_max=4)*exposure
+
+        for m in range(len(Lams)):
+            lam = Lams[m]
+            Probs = np.zeros_like(Mus)
+
+            for i in range(len(Mus)):
+
+                if Mus[i] <= _mu_solver_min(tc, lam):
+                    Probs[i] = np.nan
+
+                else:
+                    stream = Stream_From_B(Mus[i], tc, lam, Sigma)
+
+                    Stream_Si.set_params(eta = lambda vmin: \
+                                         stream.eta(vmin, stream.tc))
+
+                    Stream_Rates_th = Stream_Si.Rate(mX, Ne_max=4)*exposure
+                    Stream_Rates = (1-stream_frac)*SHM_Rates + \
+                                   stream_frac*Stream_Rates_th
+                    Probs[i] = chisq_test(Stream_Rates, SHM_Rates)[1]
+
+            Mu_Sig_Min[n,m] = Mus[np.nanargmax(Probs)]
+
+    print(process_time()-start, 'seconds passed.')
+
+    return Mu_Sig_Min
+
+def stream_vs_shm_chisq(mX, exposure, mu, tc, lam, Sigma, stream_fraction,
+                        test_xsec=1e-37, N_test=100000):
+    from pyQEdark import Crystal_DMe, ccms, hbar
+    from pyQEdark.vdfparams.nat import v0new, vescnew, vE_fn
+    from pyQEdark.stats import chisq_test
+
+    test_xsec *= 1 / (hbar**2 * ccms**2)
+
+    SHM_Si = Crystal_DMe('Si', vparams=[v0new, vE_fn(tc), vescnew])
+    SHM_Rates = SHM_Si.Rate(mX, Ne_max=4)*exposure
+
+    if mu_norm <= _mu_solver_min(tc, lam):
+        return np.nan
+
+    else:
+        stream = Stream_From_B(mu, tc, lam, Sigma)
+
+        Stream_Si = Crystal_DMe('Si', eta = lambda vmin: stream.eta(vmin,
+                                                            stream.tc))
+
+        Stream_Rates_th = Stream_Si.Rate(mX, Ne_max=4)*exposure
+
+        probs_temp = np.zeros(N_test)
+        for k in range(N_test):
+            Stream_Rates = poisson.rvs((1-stream_fraction)*SHM_Rates + \
+                                       stream_fraction*Stream_Rates_th)
+            probs_temp[k] = chisq_test(Stream_Rates, SHM_Rates)[1]
+
+        return np.mean(probs_temp)
+
+Gaia_Sausage = Stream(Mu_gal_Sausage, Sigma_Sausage)
+# print(Gaia_Sausage.tc, Gaia_Sausage.b, Gaia_Sausage.lam)
+
+Nyx = Stream(Mu_gal_Nyx, Sigma_Nyx)
+# print(Nyx.tc, Nyx.b, Nyx.lam)
+
+S1 = Stream(Mu_gal_S1, Sigma_S1)
+# print(S1.tc, S1.b, S1.lam)
+
+S2a = Stream(Mu_gal_S2a, Sigma_S2a)
+# print(S2a.tc, S2a.b, S2a.lam)
+
+S2b = Stream(Mu_gal_S2b, Sigma_S2b)
+# print(S2b.tc, S2b.b, S2b.lam)

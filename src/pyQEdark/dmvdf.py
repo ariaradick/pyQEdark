@@ -1,5 +1,5 @@
 """
-Basic class for describing a velocity distribution function.
+Basic class for describing a DM velocity distribution function.
 
 author: Aria Radick
 date: 7/19/21
@@ -153,8 +153,8 @@ class DM_Halo:
             self._setup(**kwargs)
 
         elif 'vparams' in kwargs.keys():
-            from utils.velocity_dists import f_SHM, f_Tsa, f_MSW
-            from utils.etas import etaSHM, etaTsa, etaMSW
+            from pyQEdark.vdfs import f_SHM, f_Tsa, f_MSW
+            from pyQEdark.etas import etaSHM, etaTsa, etaMSW
 
             name_dict = { 'shm' : 'Standard Halo Model',
                           'tsa' : 'Tsallis Model',

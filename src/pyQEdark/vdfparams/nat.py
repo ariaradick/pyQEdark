@@ -4,6 +4,10 @@ from pyQEdark.constants import ckms
 vEfid = 232/ckms # (km/s), velocity of earth
 vEmin = 215/ckms # (km/s)
 vEmax = 245/ckms # (km/s)
+def vE_fn(t):
+    from pyQEdark.constants import ckms
+    # t in years
+    return vEfid + 15*np.sin(2*np.pi*t)/ckms
 
 v0fid = 220/ckms # (km/s), velocity dispersion
 v0new = 228.6/ckms # (km/s)

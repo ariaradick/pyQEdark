@@ -23,12 +23,19 @@ def chisq_test(data, theory, ddof=0):
 
     i_to_del = []
     for i in range(len(data_)):
-        if data_[i] == 0.0 or theory_[i] == 0.0:
+        if data_[i] == 0.0 and theory_[i] == 0.0:
             i_to_del.append(i)
+        elif theory_[i] == 0.0 and data_[i] > 0.0:
+            return (np.nan, 0)
 
     data_ = np.delete(data_, i_to_del)
     theory_ = np.delete(theory_, i_to_del)
-    return chisquare(data_, theory_, ddof=ddof)
+
+    nu = len(data_) - ddof
+
+    chisq = np.sum((data_-theory_)**2 / theory_)
+    p = gammaincc(nu*.5, .5*chisq)
+    return (chisq,p)
 
 def _t_mu(data, theory):
     t = np.zeros_like(data)

@@ -9,12 +9,9 @@ date created: 5/16/20
 """
 
 import numpy as np
-from scipy import LowLevelCallable
 from scipy.interpolate import interp1d
 from scipy.special import erf
 from scipy.integrate import nquad, quad, trapezoid, quad_vec, odeint
-from numba import cfunc
-from numba.types import intc, CPointer, float64
 
 from pyQEdark.constants import ckms, ccms, c_light
 
@@ -330,17 +327,13 @@ def etaMSW(*args, method='fast', N_MC=100000):
 
     v0, vE, vesc, p = _params
 
-    @cfunc(float64(intc, CPointer(float64)))
-    def msw_un_cfunc(n, args):
-        v, v0, vesc, p = (args[0], args[1], args[2], args[3])
+    def msw_to_norm(v):
         if v <= vesc:
             return v**2*np.exp(-v/v0)*(vesc**2-v**2)**p
         else:
             return 0
 
-    msw_un_LLC = LowLevelCallable(msw_un_cfunc.ctypes)
-
-    KK = 4*np.pi*quad( msw_un_LLC, 0, vesc, args=(v0, vesc, p) )[0]
+    KK = 4*np.pi*quad( msw_to_norm, 0, vesc )[0]
 
     if method == 'fast':
 
@@ -393,19 +386,12 @@ def etaMSW(*args, method='fast', N_MC=100000):
             def bounds_vX(cosq, KK, v0, vE, vesc, p):
                 return [_vmin, -cosq*vE+np.sqrt((cosq**2-1)*vE**2+vesc**2)]
 
-            @cfunc(float64(intc, CPointer(float64)))
-            def intfunc(n, args):
-                vx, cosq, KK, v0, vE, vesc, p = (args[0], args[1], args[2],
-                                                 args[3], args[4], args[5],
-                                                 args[6])
+            def intfunc(vx, cosq):
                 vv = vx**2 + vE**2 + 2 * vx * vE * cosq
                 ff = np.exp(-np.sqrt(vv)/v0)*(vesc**2-vv)**p
                 return (2*np.pi/KK)*vx*ff
 
-            intfunc_LLC = LowLevelCallable(intfunc.ctypes)
-
-            return nquad(intfunc_LLC, [bounds_vX,bounds_cosq],
-                         args=(KK, v0, vE, vesc, p))[0]
+            return nquad(intfunc, [bounds_vX,bounds_cosq])[0]
 
         def eta_b(_vmin):
             def bounds_cosq(vx, KK, v0, vE, vesc, p):
@@ -414,19 +400,12 @@ def etaMSW(*args, method='fast', N_MC=100000):
             def bounds_vX(KK, v0, vE, vesc, p):
                 return [_vmin, vE+vesc]
 
-            @cfunc(float64(intc, CPointer(float64)))
-            def intfunc(n, args):
-                cosq, vx, KK, v0, vE, vesc, p = (args[0], args[1], args[2],
-                                                 args[3], args[4], args[5],
-                                                 args[6])
+            def intfunc(cosq, vx):
                 vv = vx**2 + vE**2 + 2 * vx * vE * cosq
                 ff = np.exp(-np.sqrt(vv)/v0)*(vesc**2-vv)**p
                 return (2*np.pi/KK)*vx*ff
 
-            intfunc_LLC = LowLevelCallable(intfunc.ctypes)
-
-            return nquad(intfunc_LLC, [bounds_cosq,bounds_vX],
-                         args=(KK, v0, vE, vesc, p))[0]
+            return nquad(intfunc, [bounds_cosq,bounds_vX])[0]
 
         eta = lambda vmin: np.piecewise( vmin,
                                          [ vmin <= (vesc-vE),
