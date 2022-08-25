@@ -9,7 +9,6 @@ import numpy as np
 import io
 import pkgutil
 from os import path as osp
-import sqlite3
 
 from pyQEdark.constants import *
 from pyQEdark.dmvdf import DM_Halo
