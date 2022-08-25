@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.stats import chisquare, norm, poisson, chi2
-from scipy.special import gammaincc, gamma
+from scipy.special import gammaincc, gamma, gammaln
 from scipy.optimize import brentq, minimize, Bounds
 from multiprocessing import Pool, cpu_count
 
@@ -34,61 +34,80 @@ def chisq_test(data, theory, ddof=0):
     nu = len(data_) - ddof
 
     chisq = np.sum((data_-theory_)**2 / theory_)
-    p = gammaincc(nu*.5, .5*chisq)
-    return (chisq,p)
+    return gammaincc(nu*.5, .5*chisq)
 
-def _t_mu(data, theory):
-    t = np.zeros_like(data)
-    nu = len(data)
+def log_likelihood(xi, data, signal, background):
+    thy_total = xi*signal + (1-xi)*background
+    LL = np.sum( data*np.log(thy_total) - gammaln(data+1) - thy_total )
+    return LL
 
-    data_ = np.zeros_like(data)
-    theory_ = np.zeros_like(theory)
+def d_log_likelihood(xi, data, signal, background):
+    thy_total = xi*signal + (1-xi)*background
+    dLL = np.sum( (signal-background) * (data/thy_total - 1) )
+    return dLL
 
-    data_[:] = data[:]
-    theory_[:] = theory[:]
+def d2_log_likelihood(xi, data, signal, background):
+    thy_total = xi*signal + (1-xi)*background
+    d2LL = - np.sum(data * (signal-background)**2 / thy_total**2)
+    return d2LL
 
-    for i in range(len(data)):
-        if theory_[i] == 0.0:
-            nu -= 1
-        elif data_[i] == 0.0:
-            t[i] = theory_[i]
-        else:
-            t[i] = theory_[i]-data_[i]+data_[i]*np.log(data_[i]/theory_[i])
-    t = 2*np.sum(t)
+def test_statistic(xi, data, signal, background):
+    dlogL0 = d_log_likelihood(0,data,signal,background)
+    dlogL1 = d_log_likelihood(1,data,signal,background)
+    if np.sign(dlogL0) != np.sign(dlogL1):
+        best_xi = brentq(d_log_likelihood, 0, 1, args=(data,signal,background))
+    elif np.sign(dlogL0) == -1:
+        return 0
+    else:
+        best_xi = 1
+    ts = -2 * (log_likelihood(xi, data, signal, background) - \
+                 log_likelihood(best_xi, data, signal, background))
+    return ts
 
-    return (t,nu)
+def _generate_mc(xi, signal, background, ts_fn, N_mc=100000):
+    fake_data = np.zeros((N_mc, len(background)))
 
-def t_mu_test(data, theory, ddof=0, method='chi2'):
-    tmu, nu = _t_mu(data, theory)
+    for i in range(len(background)):
+        fake_data[:,i] = poisson.rvs(background[i], size=N_mc)
 
-    if method == 'chi2':
-        p = chi2.sf(tmu,nu-ddof)
-        return (tmu, p)
+    test_stats = np.zeros(N_mc)
+    for i in range(N_mc):
+        test_stats[i] = ts_fn(xi, fake_data[i], signal, background)
+    
+    return np.histogram(test_stats, bins=100, density=True)
 
-    elif method == 'mc':
-        ts_hist, ts_bins = _generate_mc(theory)
-        mcp = _integrate_mc(tmu, ts_bins, ts_hist)
-        return (tmu, mcp)
-
-def _generate_mc(theory, N_mc=10000):
-    N_Ne = len(theory)
-    pois = np.zeros( (N_Ne, N_mc) )
-    ts = np.zeros( (N_mc) )
-    for i in range(N_Ne):
-        pois[i] = poisson.rvs(theory[i], size=N_mc)
-    for j in range(N_mc):
-        ts[j] = _t_mu(pois[:,j], theory)[0]
-    return np.histogram(ts, bins=100, density=True)
-
-def _integrate_mc(ts, bins, theory):
-    ts_i = np.digitize(ts,bins)
-    if ts_i == len(bins):
+def _integrate_mc(ts, bins, hist):
+    ts_idx = np.digitize(ts, bins)
+    if ts_idx == len(bins):
         return 0.
+    elif ts_idx == 0:
+        return 1.
     else:
         bin_width = bins[1]-bins[0]
-        first_val = (bins[ts_i] - ts) * theory[ts_i-1]
-        other_vals = theory[ts_i:]*bin_width
+        first_val = (bins[ts_idx] - ts) * hist[ts_idx-1]
+        other_vals = hist[ts_idx:]*bin_width
         return first_val + np.sum(other_vals)
+
+def LL_discovery(data, signal, background):
+    ts = test_statistic(0, data, signal, background)
+    ts_hist, ts_bins = _generate_mc(0, signal, background, test_statistic)
+    p_val = _integrate_mc(ts, ts_bins, ts_hist)
+    return p_val
+
+def avg_LL_discovery(xi, signal, background, N_mc=100000):
+    ts_hist, ts_bins = _generate_mc(0, signal, background, test_statistic)
+
+    model = xi*signal+(1-xi)*background
+    test_data = np.zeros((N_mc, len(model)))
+    for i in range(len(model)):
+        test_data[:,i] = poisson.rvs(model[i], size=N_mc)
+    
+    probs = np.zeros(N_mc)
+    for i in range(N_mc):
+        ts = test_statistic(0, test_data[i], signal, background)
+        probs[i] = _integrate_mc(ts, ts_bins, ts_hist)
+    
+    return np.mean(probs)
 
 def find_exposure(data, theory, signif, ddof=0, method='chi2', bqlims=1e6):
     def zero_func(x):

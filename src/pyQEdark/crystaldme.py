@@ -174,6 +174,35 @@ class Crystal_DMe(DM_Halo):
                        self.FDM(Q)**2 * self.data[:,a:b])*prefactor*self.dE
 
         return dRdE_
+    
+    def _rate_integral(self, Ee, mx, etas_):
+        corr = c_light**2*sec2year / (hbar*evtoj)
+        Ee = np.atleast_1d(Ee)
+        ints = np.zeros_like(Ee)
+
+        for ei in range(len(Ee)):
+            binsize = self.dE_bin
+            a = int( self.Egap / self.dE )
+            b = int( Ee[ei] / self.dE )
+            if b <= a:
+                ints[ei] = 0
+            else:
+                I_ = np.arange(a,b)
+
+                qunit = self.dq
+                q_ = np.arange(1, self.nq+1)*qunit
+                Q = np.ones( (len(q_), len(I_)) )
+                for i in range(len(I_)):
+                    Q[:,i] = q_[:]
+
+                _Ncell = 1 / self.mcell
+                prefactor = self.rho_x / mx * _Ncell * self.sig_test * alpha *\
+                            m_e**2 / self.mu_xe(mx)**2
+
+                ints[ei] = np.sum(qunit / Q * etas_[:,a:b] * \
+                            self.FDM(Q)**2 * self.data[:,a:b])*prefactor*self.dE
+
+        return ints*corr
 
     def Rate(self, mX, xsec=None, binned=True, out_unit='kgy', **kwargs):
 

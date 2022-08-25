@@ -430,6 +430,7 @@ class Rate_figure:
             ax_.set_xticks(self.evals[:-1])
             ax_.set_xticklabels(np.around(self.evals[:-1], decimals=1),
                                 fontsize=10)
+            # ax_.set_xticklabels([None for i in range(len(self.evals[:-1]))])
             ax_.xaxis.tick_top()
             ax_.tick_params(which='major', direction='in', bottom=True,
                             right=True, left=True)
@@ -451,7 +452,7 @@ class Rate_figure:
             ax_.set_xlabel(r'$N_e$')
 
         plt.subplots_adjust(bottom=.18)
-        # plt.subplots_adjust(top=.5)
+        # plt.subplots_adjust(top=.88)
 
         self.legs = []
         self.lines = []
@@ -651,8 +652,7 @@ class Sigma_figure:
         self.NeLines = []
 
         if plot_shm:
-            db_path = CrysObj.dpath
-            tmpCrys = Crystal_DMe('Si', db_path)
+            tmpCrys = Crystal_DMe('Si')
             self.fidvals = np.zeros( (self.N_fdmn, self.N_Ne, self.N_mX) )
             self.lines.append(Line2D([], [], color='k', label='SHM fiducial'))
             for i in range(self.N_fdmn):

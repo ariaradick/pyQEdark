@@ -215,6 +215,26 @@ class Stream_Analytic():
         ee = erf((vmin+mu_lab)/(np.sqrt(2)*self.sigma)) - \
              erf((vmin-mu_lab)/(np.sqrt(2)*self.sigma))
         return pref*ee/self.KK
+    
+    def _deta_dmugal(self, vmin, t, idx):
+        Mu_lab = self.Mu_gal - v_lab(t)
+        mu_lab = norm(Mu_lab)
+        pref1 = - Mu_lab[idx] / (2*mu_lab**3)
+        erf_term = erf((vmin+mu_lab)/(np.sqrt(2)*self.sigma)) - \
+                   erf((vmin-mu_lab)/(np.sqrt(2)*self.sigma))
+        pref2 = Mu_lab[idx] / (np.sqrt(2*np.pi)*mu_lab**2*self.sigma)
+        ee1 = np.exp(-(vmin+mu_lab)**2 / (2*self.sigma**2))
+        ee2 = np.exp(-(vmin-mu_lab)**2 / (2*self.sigma**2))
+        return pref1*erf_term + pref2*(ee1 + ee2)
+    
+    def _deta_dvmin(self, vmin, t):
+        vlab = v_lab(t)
+        mu_lab = norm(self.Mu_gal - vlab)
+        pref = 1 / (np.sqrt(2*np.pi)*self.sigma*mu_lab)
+        ee1 = np.exp(-(vmin+mu_lab)**2 / (2*self.sigma**2))
+        ee2 = np.exp(-(vmin-mu_lab)**2 / (2*self.sigma**2))
+        return pref*(ee1-ee2)
+
 
 class Stream_From_B_Analytic(Stream_Analytic):
 
@@ -452,7 +472,7 @@ def mu_sig_min(mX, exposure, Mus, TCs, Lams, Sigma, stream_frac,
     from time import process_time
     start = process_time()
     from pyQEdark import Crystal_DMe, ccms, hbar
-    from pyQEdark.vdfparams.nat import v0new, vescnew, vE_fn
+    from pyQEdark.vdfparams.nat import v0new, vescnew
     from pyQEdark.stats import chisq_test
 
     if analytic:
@@ -495,43 +515,272 @@ def mu_sig_min(mX, exposure, Mus, TCs, Lams, Sigma, stream_frac,
                     Stream_Rates_th = Stream_Si.Rate(mX, Ne_max=4)*exposure
                     Stream_Rates = (1-stream_frac)*SHM_Rates + \
                                    stream_frac*Stream_Rates_th
-                    Probs[i] = chisq_test(Stream_Rates, SHM_Rates)[1]
+                    Probs[i] = chisq_test(Stream_Rates, SHM_Rates)
 
             Mu_Sig_Min[n,m] = Mus[np.nanargmax(Probs)]
 
     print(process_time()-start, 'seconds passed.')
 
-    return Mu_Sig_Min
+    return np.transpose(Mu_Sig_Min)
 
-def stream_vs_shm_chisq(mX, exposure, mu, tc, lam, Sigma, stream_fraction,
-                        test_xsec=1e-37, N_test=100000):
+def mu_sig_min_am(mX, exposure, Mus, TCs, Lams, Sigma, stream_frac, times,
+                  test_xsec=1e-37, analytic=True):
+    """
+    Finds the |μ| value that minimizes the significance of a chi^2 test between
+    the SHM alone and the SHM with a stream at (tc, λ). Includes effects of
+    annual modulation.
+
+    mX : mass of dark matter [eV]
+    exposure : exposure [kg y]
+    Mus : array of mu values to scan over [dimensionless]
+    TCs : array of critical times [days]
+    Lams : array of λ, the angle between the normal to earth's rotational plane
+           and μ_solar [rads]
+    Sigma : matrix of velocity dispersion squared [dimensionless]
+    stream_frac : fraction of DM contained in the stream
+    times : list of edges of time bins for a modulation analysis [days]
+    test_xsec : assumed DM-e cross-section value [cm^2]
+    """
+    from time import process_time
+    start = process_time()
     from pyQEdark import Crystal_DMe, ccms, hbar
-    from pyQEdark.vdfparams.nat import v0new, vescnew, vE_fn
+    from pyQEdark.vdfparams.nat import v0new, vescnew
     from pyQEdark.stats import chisq_test
+
+    if analytic:
+        from pyQEdark.Streams import Stream_From_B_Analytic as Stream_From_B
+    else:
+        from pyQEdark.Streams import Stream_From_B
+
+    TCs = np.atleast_1d(TCs)
+    ntc = len(TCs)
+    Lams = np.atleast_1d(Lams)
+    nlam = len(Lams)
 
     test_xsec *= 1 / (hbar**2 * ccms**2)
 
-    SHM_Si = Crystal_DMe('Si', vparams=[v0new, vE_fn(tc), vescnew])
-    SHM_Rates = SHM_Si.Rate(mX, Ne_max=4)*exposure
+    Ts = (times[1:] + times[:-1])/2
+    nT = len(Ts)
+    exposure = exposure / nT
 
-    if mu_norm <= _mu_solver_min(tc, lam):
-        return np.nan
+    Mu_Sig_Min = np.zeros(( ntc, nlam ))
 
+    Si_crys = Crystal_DMe('Si', sig_test=test_xsec, interp=False)
+
+    SHM_Rates = np.zeros((4, nT))
+    for i in range(nT):
+        vE = norm(v_lab(Ts[i]))
+        Si_crys.set_params(vparams=[v0new, vE, vescnew])
+        SHM_Rates[:,i] = Si_crys.Rate(mX, Ne_max=4)*exposure
+
+    for n in range(len(TCs)):
+        tc = TCs[n]
+
+        for m in range(len(Lams)):
+            lam = Lams[m]
+            Probs = np.zeros_like(Mus)
+
+            for i in range(len(Mus)):
+
+                if Mus[i] <= _mu_solver_min(tc, lam):
+                    Probs[i] = np.nan
+
+                else:
+                    stream = Stream_From_B(Mus[i], tc, lam, Sigma)
+
+                    Stream_Rates_th = np.zeros((4, nT))
+                    for t_idx in range(nT):
+                        Si_crys.set_params(eta = lambda vmin: \
+                                           stream.eta(vmin, Ts[t_idx]))
+                        Stream_Rates_th[:,t_idx] = Si_crys.Rate(mX, Ne_max=4)\
+                                                   *exposure
+
+                    Stream_Rates = (1-stream_frac)*SHM_Rates + \
+                                   stream_frac*Stream_Rates_th
+
+                    Probs[i] = chisq_test(Stream_Rates.flatten(),
+                                          SHM_Rates.flatten())
+
+            Mu_Sig_Min[n,m] = Mus[np.nanargmax(Probs)]
+
+    print(process_time()-start, 'seconds passed.')
+
+    return np.transpose(Mu_Sig_Min)
+
+def stream_vs_shm_chisq(mX, exposure, Mus, TCs, Lams, Sigma, stream_fraction,
+                        test_xsec=1e-37, N_test=100000, analytic=True):
+    from time import process_time
+    start = process_time()
+
+    from pyQEdark import Crystal_DMe, ccms, hbar
+    from pyQEdark.vdfparams.nat import v0new, vescnew
+    from pyQEdark.stats import chisq_test
+
+    if analytic:
+        from pyQEdark.Streams import Stream_From_B_Analytic as Stream_From_B
     else:
-        stream = Stream_From_B(mu, tc, lam, Sigma)
+        from pyQEdark.Streams import Stream_From_B
 
-        Stream_Si = Crystal_DMe('Si', eta = lambda vmin: stream.eta(vmin,
-                                                            stream.tc))
+    TCs = np.atleast_1d(TCs)
+    Lams = np.atleast_1d(Lams)
 
-        Stream_Rates_th = Stream_Si.Rate(mX, Ne_max=4)*exposure
+    test_xsec *= 1 / (hbar**2 * ccms**2)
 
-        probs_temp = np.zeros(N_test)
-        for k in range(N_test):
-            Stream_Rates = poisson.rvs((1-stream_fraction)*SHM_Rates + \
-                                       stream_fraction*Stream_Rates_th)
-            probs_temp[k] = chisq_test(Stream_Rates, SHM_Rates)[1]
+    Stream_Si = Crystal_DMe('Si', sig_test=test_xsec, interp=False)
+    SHM_Si = Crystal_DMe('Si', sig_test=test_xsec)
 
-        return np.mean(probs_temp)
+    Probs = np.zeros( (len(Lams),len(TCs)) )
+
+    for n in range(len(TCs)):
+        tc = TCs[n]
+
+        vE = norm(v_lab(tc))
+        SHM_Si.set_params(vparams=[v0new, vE, vescnew])
+        SHM_Rates = SHM_Si.Rate(mX, Ne_max=4)*exposure
+
+        for m in range(len(Lams)):
+            lam = Lams[m]
+
+            stream = Stream_From_B(Mus[m,n], tc, lam, Sigma)
+
+            Stream_Si.set_params(eta = lambda vmin: \
+                                 stream.eta(vmin, stream.tc))
+
+            Stream_Rates_th = Stream_Si.Rate(mX, Ne_max=4)*exposure
+
+            probs_temp = np.zeros(N_test)
+            Stream_Rates = np.zeros((N_test,4))
+            for k in range(4):
+                Stream_Rates[:,k] = poisson.rvs((1-stream_fraction)*\
+                                           SHM_Rates[k] + stream_fraction*\
+                                           Stream_Rates_th[k],
+                                           size=N_test)
+            
+            for k in range(N_test):
+                probs_temp[k] = chisq_test(Stream_Rates[k], SHM_Rates)
+
+            Probs[m,n] = np.mean(probs_temp)
+
+    print(process_time()-start, 'seconds passed.')
+    return Probs
+
+def stream_vs_shm_chisq_am(mX, exposure, Mus, TCs, Lams, Sigma, stream_fraction,
+                        times, test_xsec=1e-37, N_test=100000, analytic=True):
+    from time import process_time
+    start = process_time()
+
+    from pyQEdark import Crystal_DMe, ccms, hbar
+    from pyQEdark.vdfparams.nat import v0new, vescnew
+    from pyQEdark.stats import chisq_test
+
+    if analytic:
+        from pyQEdark.Streams import Stream_From_B_Analytic as Stream_From_B
+    else:
+        from pyQEdark.Streams import Stream_From_B
+
+    TCs = np.atleast_1d(TCs)
+    Lams = np.atleast_1d(Lams)
+
+    Ts = (times[1:] + times[:-1])/2
+    nT = len(Ts)
+    exp = exposure / nT
+
+    xsec = test_xsec / (hbar**2 * ccms**2)
+
+    Si_crys = Crystal_DMe('Si', sig_test=xsec, interp=False)
+
+    SHM_Rates = np.zeros((4, nT))
+    for i in range(nT):
+        vE = norm(v_lab(Ts[i]))
+        Si_crys.set_params(vparams=[v0new, vE, vescnew])
+        SHM_Rates[:,i] = Si_crys.Rate(mX, Ne_max=4)*exp
+    flatSHM = SHM_Rates.flatten()
+
+    Probs = np.zeros( (len(Lams),len(TCs)) )
+
+    for n in range(len(TCs)):
+        tc = TCs[n]
+
+        for m in range(len(Lams)):
+            lam = Lams[m]
+
+            stream = Stream_From_B(Mus[m,n], tc, lam, Sigma)
+
+            Stream_Rates_th = np.zeros((4, nT))
+            for t_idx in range(nT):
+                Si_crys.set_params(eta = lambda vmin: \
+                                     stream.eta(vmin, Ts[t_idx]))
+                Stream_Rates_th[:,i] = Si_crys.Rate(mX, Ne_max=4)*exp
+            flatStream_th = Stream_Rates_th.flatten()
+
+            flatStream = np.zeros((nT*4, N_test))
+            for k in range(nT*4):
+                flatStream[k] = poisson.rvs((1-stream_fraction)*\
+                                           flatSHM[k] + stream_fraction*\
+                                           flatStream_th[k], size=N_test)
+
+            probs_temp = np.zeros(N_test)
+            for mc_idx in range(N_test):
+                probs_temp[mc_idx] = chisq_test(flatStream[:,mc_idx],
+                                                flatSHM[:])
+
+            Probs[m,n] = np.mean(probs_temp)
+
+    print(process_time()-start, 'seconds for chisq with modulation.')
+    return Probs
+
+def stream_vs_shm_ll_am(mX, exposure, Mus, TCs, Lams, Sigma, stream_fraction,
+                        times, test_xsec=1e-37, N_test=100000, analytic=True):
+    from time import process_time
+    start = process_time()
+
+    from pyQEdark import Crystal_DMe, ccms, hbar
+    from pyQEdark.vdfparams.nat import v0new, vescnew
+    from pyQEdark.stats import avg_LL_discovery
+
+    if analytic:
+        from pyQEdark.Streams import Stream_From_B_Analytic as Stream_From_B
+    else:
+        from pyQEdark.Streams import Stream_From_B
+
+    TCs = np.atleast_1d(TCs)
+    Lams = np.atleast_1d(Lams)
+
+    Ts = (times[1:] + times[:-1])/2
+    nT = len(Ts)
+    exp = exposure / nT
+
+    xsec = test_xsec / (hbar**2 * ccms**2)
+
+    Si_crys = Crystal_DMe('Si', sig_test=xsec, interp=False)
+
+    SHM_Rates = np.zeros((4, nT))
+    for i in range(nT):
+        vE = norm(v_lab(Ts[i]))
+        Si_crys.set_params(vparams=[v0new, vE, vescnew])
+        SHM_Rates[:,i] = Si_crys.Rate(mX, Ne_max=4)*exp
+    flatSHM = SHM_Rates.flatten()
+
+    Probs = np.zeros( (len(Lams), len(TCs)) )
+    for i in range(len(Lams)):
+        lam = Lams[i]
+        for j in range(len(TCs)):
+            tc = TCs[j]
+
+            test_Stream = Stream_From_B_Analytic(Mus[i,j], tc, lam, Sigma)
+
+            Stream_Rates = np.zeros((4, nT))
+            for t_idx in range(nT):
+                Si_crys.set_params(eta = lambda vmin: \
+                                test_Stream.eta(vmin, Ts[t_idx]))
+                Stream_Rates[:,t_idx] = Si_crys.Rate(mX, Ne_max=4)*exp
+            flatStream = Stream_Rates.flatten()
+
+            Probs[i,j] = avg_LL_discovery(stream_fraction, flatStream, 
+                                          flatSHM, N_mc=N_test)
+
+    print(process_time()-start, 'seconds for LL with modulation.')
+    return Probs
 
 Gaia_Sausage = Stream(Mu_gal_Sausage, Sigma_Sausage)
 # print(Gaia_Sausage.tc, Gaia_Sausage.b, Gaia_Sausage.lam)
