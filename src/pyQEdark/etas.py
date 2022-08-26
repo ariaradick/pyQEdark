@@ -380,10 +380,10 @@ def etaMSW(*args, method='fast', N_MC=100000):
             return np.exp(-np.sqrt(vx2)/v0)*(vesc**2-vx2)**p
 
         def eta_a(_vmin):
-            def bounds_cosq(KK, v0, vE, vesc, p):
+            def bounds_cosq():
                 return [-1,1]
 
-            def bounds_vX(cosq, KK, v0, vE, vesc, p):
+            def bounds_vX(cosq):
                 return [_vmin, -cosq*vE+np.sqrt((cosq**2-1)*vE**2+vesc**2)]
 
             def intfunc(vx, cosq):
@@ -394,10 +394,10 @@ def etaMSW(*args, method='fast', N_MC=100000):
             return nquad(intfunc, [bounds_vX,bounds_cosq])[0]
 
         def eta_b(_vmin):
-            def bounds_cosq(vx, KK, v0, vE, vesc, p):
+            def bounds_cosq(vx):
                 return [-1, (vesc**2-vE**2-vx**2)/(2*vx*vE)]
 
-            def bounds_vX(KK, v0, vE, vesc, p):
+            def bounds_vX():
                 return [_vmin, vE+vesc]
 
             def intfunc(cosq, vx):
