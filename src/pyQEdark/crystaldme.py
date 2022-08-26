@@ -141,7 +141,7 @@ class Crystal_DMe(DM_Halo):
 
         return self.eta(Vmin)
 
-    def dEta_dmX_Grid(self, _mx):
+    def dEta_dmX_Grid(self, _mx, deta_dvmin_fn):
         """
         Calculates eta at each E and q value in our grid.
         """
@@ -152,7 +152,19 @@ class Crystal_DMe(DM_Halo):
         Vmin = self.vmin(Q, E, _mx)
         dvmin_dmx = self._dvmin_dmx(Q,E,_mx)
 
-        return self._deta_dvmin(Vmin)*dvmin_dmx
+        return deta_dvmin_fn(Vmin)*dvmin_dmx
+    
+    def dEtaGrid_dmu(self, _mx, deta_dmu_fn):
+        """
+        Calculates eta at each E and q value in our grid.
+        """
+        q_list = np.arange(1,self.nq+1)*self.dq
+        E_list = np.arange(1,self.nE+1)*self.dE
+
+        E, Q = np.meshgrid(E_list, q_list)
+        Vmin = self.vmin(Q, E, _mx)
+
+        return deta_dmu_fn(Vmin)
 
     def _rateNe(self, mx, ne, etas_):
         binsize = self.dE_bin
@@ -261,7 +273,7 @@ class Crystal_DMe(DM_Halo):
             else:
                 return np.sum(rates, axis=1)*corr*xsec_corr
 
-    def _dR_dmx(self, mX, xsec=None, binned=True, out_unit='kgy', **kwargs):
+    def _dR_dmx(self, mX, deta_dvmin, xsec=None, binned=True, out_unit='kgy', **kwargs):
 
         self.set_params(**kwargs)
 
@@ -303,7 +315,7 @@ class Crystal_DMe(DM_Halo):
 
         for i in range(N_mX):
             etas = self.EtaGrid(mX[i])
-            false_etas = self.dEta_dmX_Grid(mX[i])
+            false_etas = self.dEta_dmX_Grid(mX[i], deta_dvmin)
             pref1 = 1/m_e**2 * self.mu_xe(mX[i])**2 / mX[i]**3 * \
                     ( 2*mX[i] * (m_e+mX[i]) - 3*(m_e+mX[i])**2 )
             for j in range(N_Ne):
@@ -321,6 +333,31 @@ class Crystal_DMe(DM_Halo):
                 return np.sum(rates[0])*corr*xsec_corr
             else:
                 return np.sum(rates, axis=1)*corr*xsec_corr
+
+    def _dR_dmu(self, mX, deta_dmu, xsec=None, Ne_max=12):
+
+        if xsec is None:
+            xsec_corr = 1
+        else:
+            xsec_corr = xsec / self.sig_test
+        
+        corr = c_light**2*sec2year / (hbar*evtoj)
+
+        mX = np.atleast_1d(mX)
+        N_mX = len(mX)
+
+        Ne_list = np.arange(1, Ne_max+1)
+
+        N_Ne = len(Ne_list)
+
+        rates = np.zeros( (N_mX, N_Ne) )
+
+        for i in range(N_mX):
+            etas = self.dEtaGrid_dmu(mX, deta_dmu)
+            for j in range(N_Ne):
+                rates[i,j] = self._rateNe(mX[i], Ne_list[j], etas)
+
+        return rates*corr*xsec_corr
 
     def _dR_dsig(self, mX, xsec=None, binned=True, out_unit='kgy', **kwargs):
         if xsec is None:
@@ -361,10 +398,3 @@ class Crystal_DMe(DM_Halo):
             output_ = N_event * sigtest_m / ( self.Rate(mX, binned=False) * \
                       exposure )
             return output_*corr_dict[out_unit]
-
-    def _deta_dvmin(self, vmin):
-        from pyQEdark.etas import detaSHM_dvmin, detaTsa_dvmin, detaMSW_dvmin
-        vdf_dict = {'shm' : detaSHM_dvmin,
-                    'tsa' : detaTsa_dvmin,
-                    'msw' : detaMSW_dvmin}
-        return vdf_dict[self.vdf](vmin, self.vparams)
