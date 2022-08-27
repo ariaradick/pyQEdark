@@ -1,6 +1,8 @@
 __all__ = ['constants', 'crystaldme', 'dmvdf', 'etas', 'plotting',
            'stats', 'vdfs', 'vdfparams']
 
+from dataclasses import dataclass
+
 import numpy as np
 
 import io
@@ -29,7 +31,7 @@ def mu_xe(mx):
     """
     return (m_e*mx)/(m_e + mx)
 
-class Crystal():
+class Crystal:
     
     def __init__(self, material):
 
@@ -61,7 +63,18 @@ class Crystal():
         self.nE = len(self.data[0,:])
         self.nq = len(self.data[:,0])
 
+@dataclass
+class DarkMatter:
+    mX: float
+    sigma_e: float
+    eta: callable
+    FDMn: int = 0
+    rho_X: float = .46
+
 def dR_dEe(Ee, mX, sigma_e, CrysObj, rho_X, eta_fn, FDMn):
+    rho_X = DarkMatter.rho_X
+    eta_fn = DarkMatter.eta_fn
+
     q_ = np.arange(1, CrysObj.nq+1)*CrysObj.dq
     Ncell = 1 / CrysObj.mcell
     _rho_X = rho_X * 1e15 * c_light**3 * hbar**3
