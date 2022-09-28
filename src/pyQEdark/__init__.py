@@ -61,15 +61,15 @@ class Crystal:
         _wk = 2/137
         tmpdata = io.BytesIO(pkgutil.get_data(__name__, self.datapath))
         _data = np.transpose(np.resize(np.loadtxt(tmpdata),(500,900)))
-        f2crys_data = _Epref / (self.dE * self.dq) * _wk / 4 * _data
+        self.data = _Epref / (self.dE * self.dq) * _wk / 4 * _data
 
-        self.nE = len(f2crys_data[0,:])
-        self.nq = len(f2crys_data[:,0])
+        self.nE = len(self.data[0,:])
+        self.nq = len(self.data[:,0])
 
         self.q_list = np.arange(1,self.nq+1)*self.dq
         self.E_list = np.arange(1,self.nE+1)*self.dE
 
-        self.f2crys = RectBivariateSpline(self.q_list, self.E_list, f2crys_data)
+        # self.f2crys = RectBivariateSpline(self.q_list, self.E_list, self.data)
 
 @dataclass
 class ExptSetup:
