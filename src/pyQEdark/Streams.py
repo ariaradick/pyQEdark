@@ -94,12 +94,7 @@ def _calc_tc(Mu_gal):
     else:
         tc = tc2
 
-    while tc < 0:
-        tc += 365.25
-    while tc > 365.25:
-        tc -= 365.25
-
-    return tc
+    return tc % 365.25
 
 def _calc_lam(Mu_gal):
     """

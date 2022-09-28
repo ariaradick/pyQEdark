@@ -8,9 +8,9 @@ author: Aria Radick
 date created: 5/16/20
 """
 
-import numpy as np
+import autograd.numpy as np
 from scipy.interpolate import interp1d
-from scipy.special import erf
+from autograd.scipy.special import erf
 from scipy.integrate import nquad, quad, trapezoid, quad_vec, odeint
 
 from pyQEdark.constants import ckms, ccms, c_light
@@ -62,6 +62,33 @@ def etaSHM(*args):
         return eta
     else:
         return eta(vmin)
+
+def etaSHMi(vmin, params):
+
+    """
+    Standard Halo Model with sharp cutoff.
+    Fiducial values are v0=220 km/s, vE=232 km/s, vesc= 544 km/s
+    params = [v0, vE, vesc], input parameters must be scalars
+    """
+
+    v0 = params[0]
+    vE = params[1]
+    vesc = params[2]
+
+    KK=v0**3*(-2.0*np.exp(-vesc**2/v0**2)*np.pi*vesc/v0+np.pi**1.5*erf(vesc/v0))
+
+    if vmin < (vesc-vE):
+        a = v0**2 * np.pi / (2 * vE * KK)
+        nn1_ = -4*np.exp(-vesc**2/v0**2)*vE
+        nn2_ = np.sqrt(np.pi)*v0*(erf((vmin+vE)/v0) - erf((vmin-vE)/v0))
+        return a * (nn1_ + nn2_)
+    elif vmin < (vesc+vE):
+        a = v0**2 * np.pi / (2 * vE * KK)
+        nn1_ = -2*np.exp(-vesc**2/v0**2)*(vE+vesc - vmin)
+        nn2_ = np.sqrt(np.pi)*v0*(erf(vesc/v0)-erf((vmin-vE)/v0))
+        return a * (nn1_ + nn2_)
+    else:
+        return 0.0
 
 def detaSHM_dvmin(*args):
     if len(args) == 1:
