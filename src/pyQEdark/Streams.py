@@ -179,7 +179,7 @@ class Stream_Analytic():
         self.lam = _calc_lam(self.Mu_gal)
         self.b = np.sin(self.lam)
 
-        self._Mu_gal_calc = _solve_for_Mu(norm(self.Mu_gal), self.tc, self.lam)
+        # self._Mu_gal_calc = _solve_for_Mu(norm(self.Mu_gal), self.tc, self.lam)
 
     def f_gal(self, v):
         v_ = v[:]

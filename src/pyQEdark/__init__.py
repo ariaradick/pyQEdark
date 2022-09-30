@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from scipy.interpolate import RectBivariateSpline
-from scipy.integrate import quad
+from scipy.integrate import quad, cumulative_trapezoid
 
 import io
 import pkgutil
@@ -77,7 +77,7 @@ class ExptSetup:
                  Material = Crystal('Si'),
                  vparams = [v0new, vEfid, vescnew],
                  eta_fn = etaSHM,
-                 rho_x = .46,
+                 rho_x = .4,
                  sig_e = 1e-37,
                  FDMn = 0
                  ):
@@ -110,8 +110,11 @@ def _dR_dEdq_interp(mx, setup=ExptSetup()):
 
     return prefactor * y * corr
 
-def _dR_dE_dq(mx, Ee, q, setup=ExptSetup()):
+def _dR_dEi_dqi(mx, Ei, qi, setup=ExptSetup()):
     corr = c_light**2*sec2year / (hbar*evtoj)
+
+    q = setup.mat.dq*(qi+1)
+    Ee = setup.mat.dE*(Ei+1)
 
     Ncell = 1 / setup.mat.mcell
     prefactor = setup.rho_x / mx * Ncell * setup.sig_e * alpha *\
@@ -119,26 +122,96 @@ def _dR_dE_dq(mx, Ee, q, setup=ExptSetup()):
 
     y = 1/q * setup.eta(vmin(q,Ee,mx)) * \
         FDM(q, setup.FDMn)**2 * \
-        setup.mat.f2crys(q,Ee)
+        setup.mat.data[qi, Ei]
 
     return prefactor * y * corr
 
-def _dR_dE(mx, Ee, setup=ExptSetup()):
-    intfunc = lambda q: _dR_dE_dq(mx,Ee,q,setup=setup)
-    a = setup.mat.dq
-    b = setup.mat.dq*setup.mat.nq
-    return quad(intfunc, a, b)[0]
+def _dR_dEi(mx, Ei, setup=ExptSetup()):
+    corr = c_light**2*sec2year / (hbar*evtoj)
+
+    Ee = setup.mat.dE*(Ei+1)
+    qs = setup.mat.q_list
+    q_is = np.arange(setup.mat.nq)
+
+    Ncell = 1 / setup.mat.mcell
+    prefactor = setup.rho_x / mx * Ncell * setup.sig_e * alpha *\
+                m_e**2 / mu_xe(mx)**2
+
+    y = 1/qs * setup.eta(vmin(qs,Ee,mx)) * \
+        FDM(qs, setup.FDMn)**2 * \
+        setup.mat.data[q_is, Ei]
+
+    return np.trapz(prefactor * y * corr, dx=setup.mat.dq)
 
 def RateNe(mx, ne, setup=ExptSetup()):
+    corr = c_light**2*sec2year / (hbar*evtoj)
+
     binsize = setup.mat.dE_bin
-    a = int( ( (ne-1)*binsize + setup.mat.Egap ) / setup.mat.dE )
-    b = int( (ne*binsize + setup.mat.Egap) / setup.mat.dE )
-    idxs = np.arange(a,b)
+    a = np.rint( ( (ne-1)*binsize + setup.mat.Egap ) / setup.mat.dE - 1 \
+                ).astype(int)
+    b = np.rint( ( ne*binsize + setup.mat.Egap ) / setup.mat.dE - 1 \
+                ).astype(int)
+    E_idx = np.arange(a,b)
 
-    drde = np.array([_dR_dEi(mx, i, setup=setup) for i in idxs])
+    qs = setup.mat.q_list
+    Es = setup.mat.E_list[a:b]
+    Ees, Qs = np.meshgrid(Es, qs)
+
+    Ncell = 1 / setup.mat.mcell
+    prefactor = setup.rho_x / mx * Ncell * setup.sig_e * alpha *\
+                m_e**2 / mu_xe(mx)**2
+    
+    y = 1/Qs * setup.eta(vmin(Qs,Ees,mx)) * \
+        FDM(Qs, setup.FDMn)**2 * \
+        setup.mat.data[:, a:b]
+
+    drde = np.trapz(y, dx=setup.mat.dq, axis=0)
     ratene = np.trapz(drde, dx=setup.mat.dE)
-    return ratene
+    return ratene*prefactor*corr
 
+def Rate_cumulative_trapezoid(mx, Ne=[1,2,3,4], setup=ExptSetup()):
+    """
+    Calculates the rate, binned in number of electrons, for a given experimental
+    setup
+    mx : mass of dark matter (eV)
+    Ne : range of electron bins of interest (np.arange, range, ...) should
+         be ordered and with step sizes 1 (e.g., [1,2,3,4])
+    setup : instance of ExptSetup
+    """
+    corr = c_light**2*sec2year / (hbar*evtoj)
+
+    nearr = np.insert(np.array(Ne), 0, 0)
+
+    ne_binsize = setup.mat.dE_bin
+    E_idx_oi = np.rint( (nearr*ne_binsize + \
+                         setup.mat.Egap) / setup.mat.dE - 1 ).astype(int)
+
+    a = E_idx_oi[0]
+    b = E_idx_oi[-1]
+    E_idx = np.arange(a,b)
+
+    qs = setup.mat.q_list
+    Es = setup.mat.E_list[a:b]
+    Ees, Qs = np.meshgrid(Es, qs)
+
+    Ncell = 1 / setup.mat.mcell
+    prefactor = setup.rho_x / mx * Ncell * setup.sig_e * alpha *\
+                m_e**2 / mu_xe(mx)**2
+    
+    y = 1/Qs * setup.eta(vmin(Qs,Ees,mx)) * \
+        FDM(Qs, setup.FDMn)**2 * \
+        setup.mat.data[:, a:b]
+
+    drde = np.trapz(y, dx=setup.mat.dq, axis=0)
+    cumulative_rate = cumulative_trapezoid(drde, dx=setup.mat.dE, initial=0.)
+
+    ratene = cumulative_rate[E_idx_oi[1:]-E_idx_oi[0]-1] - \
+             cumulative_rate[E_idx_oi[:-1]-E_idx_oi[0]]
+    return ratene*prefactor*corr
+
+
+def Rate(mx, Ne=[1,2,3,4], setup=ExptSetup()):
+    return np.array([RateNe(mx, n, setup) for n in Ne])
 
 class Crystal_DMe:
 
@@ -268,10 +341,7 @@ class Crystal_DMe:
             N_Ne = len(Ne)
         elif len(args)==2:
             mX, exposure = args
-        else:
-            raise TypeError('Wrong number of arguments.')
-
-        mX = np.atleast_1d(mX)
+        else:Ne_max=Ne_max
         N_mX = len(mX)
         sigtest_m = self.sig_e * c_light**2 * hbar**2
 
