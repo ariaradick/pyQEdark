@@ -211,7 +211,7 @@ class Stream_Analytic():
              erf((vmin-mu_lab)/(np.sqrt(2)*self.sigma))
         return pref*ee/self.KK
     
-    def _deta_dmugal(self, vmin, t, idx):
+    def deta_dmugal(self, vmin, t, idx):
         Mu_lab = self.Mu_gal - v_lab(t)
         mu_lab = norm(Mu_lab)
         pref1 = - Mu_lab[idx] / (2*mu_lab**3)
@@ -222,7 +222,7 @@ class Stream_Analytic():
         ee2 = np.exp(-(vmin-mu_lab)**2 / (2*self.sigma**2))
         return pref1*erf_term + pref2*(ee1 + ee2)
     
-    def _deta_dvmin(self, vmin, t):
+    def deta_dvmin(self, vmin, t):
         vlab = v_lab(t)
         mu_lab = norm(self.Mu_gal - vlab)
         pref = 1 / (np.sqrt(2*np.pi)*self.sigma*mu_lab)

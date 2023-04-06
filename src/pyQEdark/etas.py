@@ -8,9 +8,9 @@ author: Aria Radick
 date created: 5/16/20
 """
 
-import autograd.numpy as np
+import numpy as np
 from scipy.interpolate import interp1d
-from autograd.scipy.special import erf
+from scipy.special import erf
 from scipy.integrate import nquad, quad, trapezoid, quad_vec, odeint
 
 from pyQEdark.constants import ckms, ccms, c_light
@@ -108,18 +108,17 @@ def detaSHM_dvmin(*args):
 
     KK=v0**3*(-2.0*np.exp(-vesc**2/v0**2)*np.pi*vesc/v0+np.pi**1.5*erf(vesc/v0))
 
-    def deta_dvmin_a(_vmin):
-        pref = np.exp(-(vE+_vmin)**2/v0**2)*np.pi*v0**2 / (2*KK*vE**2*_vmin)
-        alpha = v0**2 + 2 * vE * _vmin
-        beta = np.exp(4*vE*_vmin/v0**2) * (v0**2-2*vE*_vmin)
+    def deta_dvmin_a(vmin):
+        pref = np.pi * v0**2 / (KK*vE)
+        alpha = np.exp(-(vmin-vE)**2/v0**2)
+        beta = np.exp(-(vmin+vE)**2/v0**2)
         return pref*(beta-alpha)
 
-    def deta_dvmin_b(_vmin):
-        pref = np.exp(-(vE+_vmin)**2/v0**2)*np.pi*v0**2 / (2*KK*vE**2*_vmin)
-        gamma = np.exp((vE-vesc+_vmin)*(vE+vesc-_vmin)/v0**2) * \
-               (v0**2-vE**2+vesc**2-_vmin**2)
-        beta = np.exp(4*vE*_vmin/v0**2) * (v0**2-2*vE*_vmin)
-        return pref*(beta-gamma)
+    def deta_dvmin_b(vmin):
+        pref = np.pi * v0**2 / (KK*vE)
+        beta = np.exp(-vesc**2/v0**2)
+        alpha = np.exp(-(vmin-vE)**2/v0**2)
+        return pref*(beta-alpha)
 
     deta_dvmin = lambda vmin: np.piecewise( vmin,
                                      [ vmin <= (vesc-vE),
